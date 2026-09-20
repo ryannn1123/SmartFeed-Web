@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart'
+    show PostgresChangeEvent, PostgresChangeFilter, PostgresChangeFilterType, RealtimeChannel;
 import '../main.dart';
 import 'servo_page.dart';
 import 'schedule_page.dart';
@@ -7,6 +9,7 @@ import 'pet_registration_page.dart';
 import 'history_page.dart';
 import 'login_page.dart';
 import '../widgets/chatbot.dart';
+import 'dart:async';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -17,6 +20,17 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
+
+  // Populated from Supabase (sensor.level, id 1), written by the
+  // ESP32's HC-SR04 ultrasonic sensor. Raw values: full / medium / small.
+  // Defaults to 'unknown' until the first successful read.
+  String _foodLevel = 'unknown';
+  RealtimeChannel? _foodLevelChannel;
+
+  // Tracks whether we've already shown the low-food alert for the
+  // current "low" streak, so it doesn't pop up again every 5 seconds —
+  // only when it transitions from OK to low.
+  bool _lowAlertShown = false;
 
   final List<Widget> _pages = const [
     ServoPage(),
@@ -29,6 +43,30 @@ class _HomePageState extends State<HomePage> {
   static const Color _coralPink = Color(0xFFFF9E89);
   static const Color _warmSand  = Color(0xFFFFD8A0);
   static const Color _inactive  = Color(0xFF8A92A3);
+
+  // Colors + fractions keyed by the raw value stored in sensor.level.
+  static const Map<String, Color> _levelColors = {
+    'full': Color(0xFF3FA24A),
+    'medium': Color(0xFFC98A1F),
+    'small': Color(0xFFD8433C),
+    'unknown': Color(0xFF8A92A3),
+  };
+
+  static const Map<String, double> _levelFraction = {
+    'full': 1.0,
+    'medium': 0.5,
+    'small': 0.15,
+    'unknown': 0.0,
+  };
+
+  // How each raw value is displayed to the user — 'small' from the
+  // sensor means the hopper is low, so it's shown as "LOW".
+  static const Map<String, String> _levelLabels = {
+    'full': 'Full',
+    'medium': 'Medium',
+    'small': 'Low',
+    'unknown': 'Unknown',
+  };
 
   final List<Map<String, dynamic>> _navItems = const [
     {'icon': Icons.tune_rounded, 'label': 'Control'},
@@ -43,6 +81,218 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const LoginPage()),
+    );
+  }
+
+  Color get _foodLevelColor => _levelColors[_foodLevel] ?? _inactive;
+  double get _foodLevelFraction => _levelFraction[_foodLevel] ?? 0.0;
+  String get _foodLevelLabel => _levelLabels[_foodLevel] ?? 'Unknown';
+
+  @override
+  void initState() {
+    super.initState();
+    // One initial fetch so the badge isn't blank while the Realtime
+    // subscription connects.
+    _fetchFoodLevel();
+    _subscribeToFoodLevel();
+  }
+
+  @override
+  void dispose() {
+    if (_foodLevelChannel != null) {
+      supabase.removeChannel(_foodLevelChannel!);
+    }
+    super.dispose();
+  }
+
+  void _subscribeToFoodLevel() {
+    _foodLevelChannel = supabase
+        .channel('sensor-food-level')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'sensor',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'id',
+            value: 1,
+          ),
+          callback: (payload) {
+            final row = payload.newRecord;
+            if (!mounted || row.isEmpty) return;
+
+            final level = (row['level'] as String?)?.toLowerCase();
+            final alertSent = row['alert_sent'] as bool? ?? false;
+
+            if (level != null && level != _foodLevel) {
+              setState(() => _foodLevel = level);
+            }
+
+            if (alertSent && !_lowAlertShown) {
+              _lowAlertShown = true;
+              _showLowFoodAlert();
+            } else if (!alertSent) {
+              _lowAlertShown = false;
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  Future<void> _fetchFoodLevel() async {
+    try {
+      final data = await supabase
+          .from('sensor')
+          .select('level, alert_sent')
+          .eq('id', 1)
+          .single();
+
+      if (!mounted) return;
+
+      final level = (data['level'] as String?)?.toLowerCase();
+      final alertSent = data['alert_sent'] as bool? ?? false;
+
+      if (level != null && level != _foodLevel) {
+        setState(() => _foodLevel = level);
+      }
+
+      if (alertSent && !_lowAlertShown) {
+        _lowAlertShown = true;
+        _showLowFoodAlert();
+      } else if (!alertSent) {
+        // Level recovered — arm the alert again for next time it's low.
+        _lowAlertShown = false;
+      }
+    } catch (_) {
+      // Transient network error — keep showing the last known level.
+    }
+  }
+
+  void _showLowFoodAlert() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFFD8433C),
+        content: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.white),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Food is running low — time to refill the hopper!',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _showFoodLevelDetails() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        final color = _foodLevelColor;
+        final fraction = _foodLevelFraction;
+        return Container(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E5EA),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.rice_bowl_rounded, color: color, size: 30),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Food Level: $_foodLevelLabel',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF172033),
+                ),
+              ),
+              const SizedBox(height: 14),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: LinearProgressIndicator(
+                  value: fraction,
+                  minHeight: 10,
+                  backgroundColor: const Color(0xFFEFF1F5),
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _foodLevel == 'small'
+                    ? 'The hopper is running low — consider refilling soon.'
+                    : 'Your feeder currently has $_foodLevelLabel food levels.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF8A92A3),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFoodLevelButton() {
+    final color = _foodLevelColor;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: GestureDetector(
+        onTap: _showFoodLevelDetails,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withOpacity(0.4), width: 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.rice_bowl_rounded, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(
+                _foodLevelLabel.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -115,6 +365,7 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
         actions: [
+          _buildFoodLevelButton(),
           PopupMenuButton<void>(
             offset: const Offset(0, 48),
             color: Colors.white,

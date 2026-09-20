@@ -27,12 +27,16 @@ class _ServoPageState extends State<ServoPage>
   // Selected servo angle
 // Selected feeding portion
 String _selectedPortion = 'medium';
+
+/////////////////
+//String _foodLvel = 'unknown';
   // =========================
   // PET DETECTION
   // =========================
 
   String _petDetection = 'No Pet Detected';
   double _petConfidence = 0.0;
+
 
   Timer? _detectionTimer;
 
@@ -91,6 +95,8 @@ String _selectedPortion = 'medium';
     _startDetectionPolling();
   }
 
+  //
+ 
   // =========================
   // PET DETECTION POLLING
   // =========================
@@ -102,7 +108,7 @@ String _selectedPortion = 'medium';
         try {
           final response = await http.get(
             Uri.parse(
-              'http://192.168.1.7:5000/detection',
+              '192.168.137.173',
             ),
           ).timeout(
             const Duration(seconds: 3),
@@ -319,47 +325,7 @@ Duration _getFeedingDuration(String portion) {
                   // HEADER
                   // =========================
 
-                  AnimatedBuilder(
-                    animation: _pawAnimation,
-                    builder: (context, child) {
-                      return Transform.scale(
-                        scale:
-                            1 + _pawAnimation.value * 0.1,
-                        child: child,
-                      );
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 8,
-                        horizontal: 15,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.55),
-                        borderRadius:
-                            BorderRadius.circular(30),
-                        border: Border.all(
-                          color:
-                              Colors.white.withOpacity(0.7),
-                          width: 1.5,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const _PawBadge(),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Food Controller',
-                            style: GoogleFonts.fraunces(
-                              fontSize: 23,
-                              fontWeight: FontWeight.w700,
-                              color: _brownSoft,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                 
 
                   const SizedBox(height: 10),
 
@@ -399,9 +365,9 @@ Duration _getFeedingDuration(String portion) {
                         child: ClipRRect(
                           borderRadius:
                               BorderRadius.circular(24),
-                          child: MjpegView(
+                          child: MjpegView( 
                             uri:
-                               'http://192.168.137.67',
+                               'http://smartfeedcam.local:81/stream',
                             width: double.infinity,
                             height: 220,
                             fit: BoxFit.cover,

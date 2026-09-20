@@ -73,6 +73,23 @@ class _HistoryPageState extends State<HistoryPage> {
     return 'Full';
   }
 
+  // Progress-bar fraction driven by the normalized Small/Medium/Full
+  // label (not the raw stored angle) — older rows can have an angle
+  // value that no longer matches the 45/90/180 presets, which would
+  // otherwise make the bar disagree with the text next to it.
+  double _portionProgress(String portion) {
+    switch (portion) {
+      case 'Small':
+        return 0.25;
+      case 'Medium':
+        return 0.5;
+      case 'Full':
+        return 1.0;
+      default:
+        return 0.0;
+    }
+  }
+
   String _formatDate(String? dateStr) {
     if (dateStr == null) return '—';
     final dt = DateTime.tryParse(dateStr)?.toLocal();
@@ -292,462 +309,463 @@ class _HistoryPageState extends State<HistoryPage> {
                         child: CircularProgressIndicator(color: _Palette.salmon),
                       )
                     : RefreshIndicator(
-                color: _Palette.salmon,
-                onRefresh: _fetchLogs,
-                child: CustomScrollView(
-                  slivers: [
-                    // Stats Cards
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          children: [
-                            IntrinsicHeight(
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Expanded(
-                                    child: _StatCard(
-                                      label: 'Total Feedings',
-                                      value: '$_totalFeedings',
-                                      icon: Icons.history,
-                                      color: _Palette.salmon,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: _StatCard(
-                                      label: 'Today',
-                                      value: '$_todayFeedings',
-                                      icon: Icons.today,
-                                      color: _Palette.peach,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: _StatCard(
-                                      label: 'Common Portion',
-                                      value: _mostCommonPortion,
-                                      icon: Icons.pie_chart,
-                                      color: const Color(0xFFE0A438),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-
-                            // Filter chips
-                            Row(
-                              children: _filters.map((f) {
-                                final selected = _filter == f;
-                                return Padding(
-                                  padding: const EdgeInsets.only(right: 8),
-                                  child: GestureDetector(
-                                    onTap: () =>
-                                        setState(() => _filter = f),
-                                    child: AnimatedContainer(
-                                      duration:
-                                          const Duration(milliseconds: 180),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 16, vertical: 8),
-                                      decoration: BoxDecoration(
-                                        gradient: selected
-                                            ? const LinearGradient(
-                                                begin: Alignment.topLeft,
-                                                end: Alignment.bottomRight,
-                                                colors: [
-                                                  _Palette.salmon,
-                                                  _Palette.peach,
-                                                ],
-                                              )
-                                            : null,
-                                        color:
-                                            selected ? null : Colors.white,
-                                        borderRadius:
-                                            BorderRadius.circular(20),
-                                        border: Border.all(
-                                          color: selected
-                                              ? Colors.transparent
-                                              : _Palette.salmon
-                                                  .withOpacity(0.4),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        f,
-                                        style: GoogleFonts.dmSans(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: selected
-                                              ? Colors.white
-                                              : _Palette.salmon,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    // Empty state
-                    if (_filteredLogs.isEmpty)
-                      SliverFillRemaining(
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                width: 84,
-                                height: 84,
-                                decoration: BoxDecoration(
-                                  color: _Palette.blush.withOpacity(0.5),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.no_meals,
-                                  size: 40,
-                                  color: _Palette.salmon,
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No feeding logs yet',
-                                style: GoogleFonts.fraunces(
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w700,
-                                  color: _Palette.brownSoft,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Logs appear after the feeder feeds your pet',
-                                style: GoogleFonts.dmSans(
-                                  fontSize: 13,
-                                  color: _Palette.brownSoft.withOpacity(0.6),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                    // Grouped logs
-                    for (final entry in grouped.entries) ...[
-                      // Date header
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.7),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  entry.key,
-                                  style: GoogleFonts.dmSans(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: _Palette.brownSoft,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Divider(
-                                  color: _Palette.brown.withOpacity(0.2),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      // Log items
-                      SliverList(
-                        delegate: SliverChildBuilderDelegate(
-                          (context, index) {
-                            final log = entry.value[index];
-                            final angle = log['angle'] as int?;
-
-                            String portion = log['portion_label'] as String? ??
-                                _portionLabel(angle);
-
-                            // Normalize old database values to the new names
-                            if (portion.toLowerCase().contains('small')) {
-                              portion = 'Small';
-                            } else if (portion.toLowerCase().contains('medium')) {
-                              portion = 'Medium';
-                            } else if (portion.toLowerCase().contains('full') ||
-                                portion.toLowerCase().contains('large')) {
-                              portion = 'Full';
-                            } else {
-                              portion = _portionLabel(angle);
-                            }
-
-                            final triggerType =
-                                log['trigger_type'] as String? ?? 'manual';
-                            final isScheduled =
-                                triggerType.toLowerCase() == 'scheduled';
-
-                            return Dismissible(
-                              key: Key('log_${log['id']}'),
-                              direction: DismissDirection.endToStart,
-                              background: Container(
-                                margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                                decoration: BoxDecoration(
-                                  color: Colors.red.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                alignment: Alignment.centerRight,
-                                padding: const EdgeInsets.only(right: 20),
+                        color: _Palette.salmon,
+                        onRefresh: _fetchLogs,
+                        child: CustomScrollView(
+                          slivers: [
+                            // Stats Cards
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
                                 child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    const Icon(Icons.delete_outline,
-                                        color: Colors.red, size: 26),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Delete',
-                                      style: GoogleFonts.dmSans(
-                                        color: Colors.red,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              confirmDismiss: (_) async {
-                                return await showDialog<bool>(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    backgroundColor: const Color(0xFFFFFDF9),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(20)),
-                                    title: Text(
-                                      'Delete this log?',
-                                      style: GoogleFonts.fraunces(
-                                        fontWeight: FontWeight.w700,
-                                        color: _Palette.brownSoft,
-                                      ),
-                                    ),
-                                    content: Text(
-                                      'This feeding record will be removed.',
-                                      style: GoogleFonts.dmSans(
-                                        color: _Palette.brownSoft.withOpacity(0.8),
-                                      ),
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.pop(ctx, false),
-                                        child: Text('Cancel',
-                                            style: GoogleFonts.dmSans(
-                                                color: _Palette.muted)),
-                                      ),
-                                      FilledButton(
-                                        onPressed: () =>
-                                            Navigator.pop(ctx, true),
-                                        style: FilledButton.styleFrom(
-                                          backgroundColor: _Palette.salmon,
-                                        ),
-                                        child: const Text('Delete'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                              onDismissed: (_) =>
-                                  _deleteLog(log['id'] as int),
-                              child: Container(
-                                margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.92),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: isScheduled
-                                        ? _Palette.peach.withOpacity(0.5)
-                                        : _Palette.salmon.withOpacity(0.25),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: _Palette.brownSoft.withOpacity(0.08),
-                                      blurRadius: 12,
-                                      offset: const Offset(0, 5),
-                                    ),
-                                  ],
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Row(
-                                    children: [
-                                      // Icon
-                                      Container(
-                                        width: 44,
-                                        height: 44,
-                                        decoration: BoxDecoration(
-                                          gradient: isScheduled
-                                              ? LinearGradient(
-                                                  colors: [
-                                                    _Palette.peach.withOpacity(0.7),
-                                                    _Palette.blush,
-                                                  ],
-                                                )
-                                              : LinearGradient(
-                                                  colors: [
-                                                    _Palette.salmon,
-                                                    _Palette.peach,
-                                                  ],
-                                                ),
-                                          borderRadius: BorderRadius.circular(14),
-                                        ),
-                                        child: Icon(
-                                          isScheduled
-                                              ? Icons.schedule
-                                              : Icons.touch_app,
-                                          color: Colors.white,
-                                          size: 22,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-
-                                      // Details
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              children: [
-                                                Text(
-                                                  _formatTime(
-                                                      log['fed_at'] as String?),
-                                                  style: GoogleFonts.fraunces(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.w700,
-                                                    color: _Palette.brown,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Container(
-                                                  padding: const EdgeInsets.symmetric(
-                                                      horizontal: 8, vertical: 2),
-                                                  decoration: BoxDecoration(
-                                                    color: isScheduled
-                                                        ? _Palette.peach.withOpacity(0.3)
-                                                        : _Palette.salmon.withOpacity(0.15),
-                                                    borderRadius:
-                                                        BorderRadius.circular(8),
-                                                  ),
-                                                  child: Text(
-                                                    isScheduled
-                                                        ? 'Scheduled'
-                                                        : 'Manual',
-                                                    style: GoogleFonts.dmSans(
-                                                      fontSize: 11,
-                                                      fontWeight: FontWeight.w600,
-                                                      color: _Palette.brownSoft,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Row(
-                                              children: [
-                                                Icon(
-                                                  Icons.pets,
-                                                  size: 13,
-                                                  color: _Palette.brownSoft
-                                                      .withOpacity(0.5),
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  '$portion portion',
-                                                  style: GoogleFonts.dmSans(
-                                                    fontSize: 13,
-                                                    color: _Palette.brownSoft
-                                                        .withOpacity(0.65),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            if (log['notes'] != null &&
-                                                (log['notes'] as String)
-                                                    .isNotEmpty) ...[
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                log['notes'] as String,
-                                                style: GoogleFonts.dmSans(
-                                                  fontSize: 12,
-                                                  color: _Palette.brownSoft
-                                                      .withOpacity(0.45),
-                                                  fontStyle: FontStyle.italic,
-                                                ),
-                                              ),
-                                            ],
-                                          ],
-                                        ),
-                                      ),
-
-                                      // Angle progress
-                                      Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.end,
+                                    IntrinsicHeight(
+                                      child: Row(
+                                        crossAxisAlignment: CrossAxisAlignment.stretch,
                                         children: [
-                                          Text(
-                                            portion,
-                                            style: GoogleFonts.dmSans(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w800,
+                                          Expanded(
+                                            child: _StatCard(
+                                              label: 'Total Feedings',
+                                              value: '$_totalFeedings',
+                                              icon: Icons.history,
                                               color: _Palette.salmon,
                                             ),
                                           ),
-                                          const SizedBox(height: 4),
-                                          SizedBox(
-                                            width: 48,
-                                            child: ClipRRect(
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                              child: LinearProgressIndicator(
-                                                value: angle != null
-                                                    ? angle / 180
-                                                    : 0,
-                                                backgroundColor: _Palette.blush
-                                                    .withOpacity(0.5),
-                                                color: _Palette.salmon,
-                                                minHeight: 6,
-                                              ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: _StatCard(
+                                              label: 'Today',
+                                              value: '$_todayFeedings',
+                                              icon: Icons.today,
+                                              color: _Palette.peach,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: _StatCard(
+                                              label: 'Common Portion',
+                                              value: _mostCommonPortion,
+                                              icon: Icons.pie_chart,
+                                              color: const Color(0xFFE0A438),
                                             ),
                                           ),
                                         ],
                                       ),
+                                    ),
+                                    const SizedBox(height: 16),
+
+                                    // Filter chips
+                                    Row(
+                                      children: _filters.map((f) {
+                                        final selected = _filter == f;
+                                        return Padding(
+                                          padding: const EdgeInsets.only(right: 8),
+                                          child: GestureDetector(
+                                            onTap: () =>
+                                                setState(() => _filter = f),
+                                            child: AnimatedContainer(
+                                              duration:
+                                                  const Duration(milliseconds: 180),
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 16, vertical: 8),
+                                              decoration: BoxDecoration(
+                                                gradient: selected
+                                                    ? const LinearGradient(
+                                                        begin: Alignment.topLeft,
+                                                        end: Alignment.bottomRight,
+                                                        colors: [
+                                                          _Palette.salmon,
+                                                          _Palette.peach,
+                                                        ],
+                                                      )
+                                                    : null,
+                                                color:
+                                                    selected ? null : Colors.white,
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                                border: Border.all(
+                                                  color: selected
+                                                      ? Colors.transparent
+                                                      : _Palette.salmon
+                                                          .withOpacity(0.4),
+                                                ),
+                                              ),
+                                              child: Text(
+                                                f,
+                                                style: GoogleFonts.dmSans(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: selected
+                                                      ? Colors.white
+                                                      : _Palette.salmon,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            // Empty state
+                            if (_filteredLogs.isEmpty)
+                              SliverFillRemaining(
+                                child: Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Container(
+                                        width: 84,
+                                        height: 84,
+                                        decoration: BoxDecoration(
+                                          color: _Palette.blush.withOpacity(0.5),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.no_meals,
+                                          size: 40,
+                                          color: _Palette.salmon,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'No feeding logs yet',
+                                        style: GoogleFonts.fraunces(
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w700,
+                                          color: _Palette.brownSoft,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Logs appear after the feeder feeds your pet',
+                                        style: GoogleFonts.dmSans(
+                                          fontSize: 13,
+                                          color: _Palette.brownSoft.withOpacity(0.6),
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
-                              ), // close Container (Dismissible child)
-                            ); // close Dismissible
-                          },
-                          childCount: entry.value.length,
+                              ),
+
+                            // Grouped logs
+                            for (final entry in grouped.entries) ...[
+                              // Date header
+                              SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.7),
+                                          borderRadius: BorderRadius.circular(20),
+                                        ),
+                                        child: Text(
+                                          entry.key,
+                                          style: GoogleFonts.dmSans(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                            color: _Palette.brownSoft,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Divider(
+                                          color: _Palette.brown.withOpacity(0.2),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+
+                              // Log items
+                              SliverList(
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, index) {
+                                    final log = entry.value[index];
+                                    final angle = log['angle'] as int?;
+
+                                    String portion = log['portion_label'] as String? ??
+                                        _portionLabel(angle);
+
+                                    // Normalize old database values to the new names
+                                    if (portion.toLowerCase().contains('small')) {
+                                      portion = 'Small';
+                                    } else if (portion.toLowerCase().contains('medium')) {
+                                      portion = 'Medium';
+                                    } else if (portion.toLowerCase().contains('full') ||
+                                        portion.toLowerCase().contains('large')) {
+                                      portion = 'Full';
+                                    } else {
+                                      portion = _portionLabel(angle);
+                                    }
+
+                                    final triggerType =
+                                        log['trigger_type'] as String? ?? 'manual';
+                                    final isScheduled =
+                                        triggerType.toLowerCase() == 'scheduled';
+
+                                    return Dismissible(
+                                      key: Key('log_${log['id']}'),
+                                      direction: DismissDirection.endToStart,
+                                      background: Container(
+                                        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(20),
+                                        ),
+                                        alignment: Alignment.centerRight,
+                                        padding: const EdgeInsets.only(right: 20),
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            const Icon(Icons.delete_outline,
+                                                color: Colors.red, size: 26),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              'Delete',
+                                              style: GoogleFonts.dmSans(
+                                                color: Colors.red,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      confirmDismiss: (_) async {
+                                        return await showDialog<bool>(
+                                          context: context,
+                                          builder: (ctx) => AlertDialog(
+                                            backgroundColor: const Color(0xFFFFFDF9),
+                                            shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(20)),
+                                            title: Text(
+                                              'Delete this log?',
+                                              style: GoogleFonts.fraunces(
+                                                fontWeight: FontWeight.w700,
+                                                color: _Palette.brownSoft,
+                                              ),
+                                            ),
+                                            content: Text(
+                                              'This feeding record will be removed.',
+                                              style: GoogleFonts.dmSans(
+                                                color: _Palette.brownSoft.withOpacity(0.8),
+                                              ),
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(ctx, false),
+                                                child: Text('Cancel',
+                                                    style: GoogleFonts.dmSans(
+                                                        color: _Palette.muted)),
+                                              ),
+                                              FilledButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(ctx, true),
+                                                style: FilledButton.styleFrom(
+                                                  backgroundColor: _Palette.salmon,
+                                                ),
+                                                child: const Text('Delete'),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                      onDismissed: (_) =>
+                                          _deleteLog(log['id'] as int),
+                                      child: Container(
+                                        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.92),
+                                          borderRadius: BorderRadius.circular(20),
+                                          border: Border.all(
+                                            color: isScheduled
+                                                ? _Palette.peach.withOpacity(0.5)
+                                                : _Palette.salmon.withOpacity(0.25),
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: _Palette.brownSoft.withOpacity(0.08),
+                                              blurRadius: 12,
+                                              offset: const Offset(0, 5),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(14),
+                                          child: Row(
+                                            children: [
+                                              // Icon
+                                              Container(
+                                                width: 44,
+                                                height: 44,
+                                                decoration: BoxDecoration(
+                                                  gradient: isScheduled
+                                                      ? LinearGradient(
+                                                          colors: [
+                                                            _Palette.peach.withOpacity(0.7),
+                                                            _Palette.blush,
+                                                          ],
+                                                        )
+                                                      : LinearGradient(
+                                                          colors: [
+                                                            _Palette.salmon,
+                                                            _Palette.peach,
+                                                          ],
+                                                        ),
+                                                  borderRadius: BorderRadius.circular(14),
+                                                ),
+                                                child: Icon(
+                                                  isScheduled
+                                                      ? Icons.schedule
+                                                      : Icons.touch_app,
+                                                  color: Colors.white,
+                                                  size: 22,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+
+                                              // Details
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Row(
+                                                      children: [
+                                                        Text(
+                                                          _formatTime(
+                                                              log['fed_at'] as String?),
+                                                          style: GoogleFonts.fraunces(
+                                                            fontSize: 16,
+                                                            fontWeight: FontWeight.w700,
+                                                            color: _Palette.brown,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(width: 8),
+                                                        Container(
+                                                          padding: const EdgeInsets.symmetric(
+                                                              horizontal: 8, vertical: 2),
+                                                          decoration: BoxDecoration(
+                                                            color: isScheduled
+                                                                ? _Palette.peach.withOpacity(0.3)
+                                                                : _Palette.salmon.withOpacity(0.15),
+                                                            borderRadius:
+                                                                BorderRadius.circular(8),
+                                                          ),
+                                                          child: Text(
+                                                            isScheduled
+                                                                ? 'Scheduled'
+                                                                : 'Manual',
+                                                            style: GoogleFonts.dmSans(
+                                                              fontSize: 11,
+                                                              fontWeight: FontWeight.w600,
+                                                              color: _Palette.brownSoft,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Row(
+                                                      children: [
+                                                        Icon(
+                                                          Icons.pets,
+                                                          size: 13,
+                                                          color: _Palette.brownSoft
+                                                              .withOpacity(0.5),
+                                                        ),
+                                                        const SizedBox(width: 4),
+                                                        Text(
+                                                          '$portion portion',
+                                                          style: GoogleFonts.dmSans(
+                                                            fontSize: 13,
+                                                            color: _Palette.brownSoft
+                                                                .withOpacity(0.65),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    if (log['notes'] != null &&
+                                                        (log['notes'] as String)
+                                                            .isNotEmpty) ...[
+                                                      const SizedBox(height: 4),
+                                                      Text(
+                                                        log['notes'] as String,
+                                                        style: GoogleFonts.dmSans(
+                                                          fontSize: 12,
+                                                          color: _Palette.brownSoft
+                                                              .withOpacity(0.45),
+                                                          fontStyle: FontStyle.italic,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ],
+                                                ),
+                                              ),
+
+                                              // Portion progress
+                                              Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.end,
+                                                children: [
+                                                  Text(
+                                                    portion,
+                                                    style: GoogleFonts.dmSans(
+                                                      fontSize: 15,
+                                                      fontWeight: FontWeight.w800,
+                                                      color: _Palette.salmon,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  SizedBox(
+                                                    width: 48,
+                                                    child: ClipRRect(
+                                                      borderRadius:
+                                                          BorderRadius.circular(4),
+                                                      child: LinearProgressIndicator(
+                                                        // Driven by the normalized
+                                                        // label, not the raw angle —
+                                                        // see _portionProgress above.
+                                                        value: _portionProgress(portion),
+                                                        backgroundColor: _Palette.blush
+                                                            .withOpacity(0.5),
+                                                        color: _Palette.salmon,
+                                                        minHeight: 6,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ), // close Container (Dismissible child)
+                                    ); // close Dismissible
+                                  },
+                                  childCount: entry.value.length,
+                                ),
+                              ),
+                            ],
+
+                            // Bottom padding
+                            const SliverToBoxAdapter(
+                              child: SizedBox(height: 100),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-
-                    // Bottom padding
-                    const SliverToBoxAdapter(
-                      child: SizedBox(height: 100),
-                    ),
-                  ],
-                ),
-              ),
               ),
             ],
           ),
