@@ -7,7 +7,7 @@ SmartFeed is a Flutter based smart pet feeding system designed to help pet owner
 * 🐶 User Authentication
 * 🐱 Pet Feeding Schedule
 * 📷 Camera Monitoring
-* 🤖 AI Pet Assistant (Groq API)
+* 🤖 AI ChatBot Assistan (Groq API)
 * 📊 Feeding History
 * 📢 Notifications
 * ☁️ Supabase Database Integration
@@ -19,8 +19,10 @@ SmartFeed is a Flutter based smart pet feeding system designed to help pet owner
 * Supabase
 * Groq API
 * ESP32
+* ESP32CAM
+* YOLO
 * Git & GitHub
 
 ## Developer
 
-* Ryan Lequin
+* Ryan Carlo Lequin
