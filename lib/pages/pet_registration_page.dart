@@ -33,7 +33,6 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
   final _breedController = TextEditingController();
   final _ageController = TextEditingController();
 
-  final ImagePicker _picker = ImagePicker();
 
   String _petType = 'Dog';
   bool _loading = false;
@@ -96,30 +95,6 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
   // SELECT PHOTOS
   // ============================================================
 
-  Future<List<XFile>> _pickPetPhotos() async {
-    try {
-      final images = await _picker.pickMultiImage(
-        imageQuality: 80,
-        maxWidth: 1600,
-        maxHeight: 1600,
-      );
-
-      if (images.isEmpty) {
-        return [];
-      }
-
-      if (images.length > 20) {
-        _showMessage('Please select a maximum of 20 photos.');
-
-        return images.take(20).toList();
-      }
-
-      return images;
-    } catch (e) {
-      _showMessage('Error selecting photos: $e');
-      return [];
-    }
-  }
 
   // ============================================================
   // SHOW REGISTER DIALOG

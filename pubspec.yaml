@@ -21,6 +21,9 @@ dependencies:
   mjpeg_view: ^1.0.1
   image_picker: ^1.2.3
   google_fonts: ^8.2.1
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
+  flutter_local_notifications: ^22.3.1
 
 dev_dependencies:
   flutter_test:

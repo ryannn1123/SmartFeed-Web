@@ -5,7 +5,6 @@ import '../main.dart';
 
 // =========================
 // SHARED PALETTE
-// (matches servo_page.dart's pet-warm theme)
 // =========================
 
 class _Palette {
@@ -19,9 +18,7 @@ class _Palette {
 }
 
 // =========================
-// PORTION MAPPING (display only)
-// Mirrors the angle presets used across the app —
-// 45 = Small, 90 = Medium, 180 = Full.
+// PORTION MAPPING
 // =========================
 
 String _portionLabel(int angle) {
@@ -70,6 +67,7 @@ class _SchedulePageState extends State<SchedulePage> {
       final res = await supabase
           .from('schedule')
           .select()
+          .order('feed_date', ascending: true)
           .order('feed_time', ascending: true);
 
       setState(() {
@@ -91,6 +89,7 @@ class _SchedulePageState extends State<SchedulePage> {
 
     try {
       await supabase.from('schedule').insert({
+        'feed_date': result['feed_date'],
         'feed_time': result['feed_time'],
         'angle': result['angle'],
         'enabled': true,
@@ -118,6 +117,7 @@ class _SchedulePageState extends State<SchedulePage> {
       await supabase
           .from('schedule')
           .update({
+            'feed_date': result['feed_date'],
             'feed_time': result['feed_time'],
             'angle': result['angle'],
           })
@@ -134,7 +134,11 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 
   Future<void> _toggleSchedule(int id, bool enabled) async {
-    await supabase.from('schedule').update({'enabled': enabled}).eq('id', id);
+    await supabase
+        .from('schedule')
+        .update({'enabled': enabled})
+        .eq('id', id);
+
     _fetchSchedules();
   }
 
@@ -143,7 +147,9 @@ class _SchedulePageState extends State<SchedulePage> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFFFFFDF9),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
         title: Text(
           'Delete feeding time?',
           style: GoogleFonts.fraunces(
@@ -153,7 +159,9 @@ class _SchedulePageState extends State<SchedulePage> {
         ),
         content: Text(
           'This feeding schedule will be removed.',
-          style: GoogleFonts.dmSans(color: _Palette.brownSoft.withOpacity(0.8)),
+          style: GoogleFonts.dmSans(
+            color: _Palette.brownSoft.withOpacity(0.8),
+          ),
         ),
         actions: [
           TextButton(
@@ -175,7 +183,11 @@ class _SchedulePageState extends State<SchedulePage> {
     );
 
     if (confirm == true) {
-      await supabase.from('schedule').delete().eq('id', id);
+      await supabase
+          .from('schedule')
+          .delete()
+          .eq('id', id);
+
       _fetchSchedules();
     }
   }
@@ -212,7 +224,10 @@ class _SchedulePageState extends State<SchedulePage> {
                         gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
-                          colors: [_Palette.salmon, _Palette.peach],
+                          colors: [
+                            _Palette.salmon,
+                            _Palette.peach,
+                          ],
                         ),
                       ),
                       child: const Icon(
@@ -235,7 +250,7 @@ class _SchedulePageState extends State<SchedulePage> {
               ),
 
               // =========================
-              // ADD FEEDING TIME (moved to top)
+              // ADD FEEDING TIME
               // =========================
 
               Padding(
@@ -249,7 +264,10 @@ class _SchedulePageState extends State<SchedulePage> {
                       gradient: const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [_Palette.salmon, _Palette.peach],
+                        colors: [
+                          _Palette.salmon,
+                          _Palette.peach,
+                        ],
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -297,26 +315,46 @@ class _SchedulePageState extends State<SchedulePage> {
                             color: _Palette.salmon,
                             onRefresh: _fetchSchedules,
                             child: ListView.separated(
-                              padding:
-                                  const EdgeInsets.fromLTRB(18, 12, 18, 130),
+                              padding: const EdgeInsets.fromLTRB(
+                                18,
+                                12,
+                                18,
+                                130,
+                              ),
                               itemCount: _schedules.length,
                               separatorBuilder: (_, __) =>
                                   const SizedBox(height: 14),
                               itemBuilder: (context, index) {
                                 final s = _schedules[index];
-                                final timeStr = s['feed_time'].toString();
-                                final enabled = s['enabled'] as bool;
-                                final angle = s['angle'] as int? ?? 90;
+
+                                final timeStr =
+                                    s['feed_time'].toString();
+
+                                final dateStr =
+                                    s['feed_date']?.toString();
+
+                                final enabled =
+                                    s['enabled'] as bool;
+
+                                final angle =
+                                    s['angle'] as int? ?? 90;
 
                                 return _ScheduleCard(
                                   rawTimeString: timeStr,
+                                  rawDateString: dateStr,
                                   angle: angle,
                                   enabled: enabled,
-                                  onEdit: () => _editSchedule(s),
+                                  onEdit: () =>
+                                      _editSchedule(s),
                                   onDelete: () =>
-                                      _deleteSchedule(s['id'] as int),
+                                      _deleteSchedule(
+                                    s['id'] as int,
+                                  ),
                                   onToggle: (val) =>
-                                      _toggleSchedule(s['id'] as int, val),
+                                      _toggleSchedule(
+                                    s['id'] as int,
+                                    val,
+                                  ),
                                 );
                               },
                             ),
@@ -330,8 +368,13 @@ class _SchedulePageState extends State<SchedulePage> {
   }
 }
 
+// ======================================================
+// SCHEDULE CARD
+// ======================================================
+
 class _ScheduleCard extends StatelessWidget {
   final String rawTimeString;
+  final String? rawDateString;
   final int angle;
   final bool enabled;
   final VoidCallback onEdit;
@@ -340,6 +383,7 @@ class _ScheduleCard extends StatelessWidget {
 
   const _ScheduleCard({
     required this.rawTimeString,
+    required this.rawDateString,
     required this.angle,
     required this.enabled,
     required this.onEdit,
@@ -349,24 +393,51 @@ class _ScheduleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Parse time/date for formatted display
     String formattedTime = rawTimeString;
-    String? formattedDate;
+    String formattedDate = 'Scheduled feeding';
 
     try {
-      if (rawTimeString.contains('T')) {
-        final dt = DateTime.parse(rawTimeString);
-        formattedTime = DateFormat.jm().format(dt);
-        formattedDate = DateFormat('MMM d, yyyy').format(dt);
-      } else {
-        final parts = rawTimeString.split(':');
-        final timeOfDay = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+      final parts = rawTimeString.split(':');
+
+      if (parts.length >= 2) {
+        final hour = int.parse(parts[0]);
+        final minute = int.parse(parts[1]);
+
+        final timeOfDay = TimeOfDay(
+          hour: hour,
+          minute: minute,
+        );
+
         final now = DateTime.now();
-        final dt = DateTime(now.year, now.month, now.day, timeOfDay.hour, timeOfDay.minute);
+
+        final dt = DateTime(
+          now.year,
+          now.month,
+          now.day,
+          timeOfDay.hour,
+          timeOfDay.minute,
+        );
+
         formattedTime = DateFormat.jm().format(dt);
       }
     } catch (_) {
-      formattedTime = rawTimeString.length >= 5 ? rawTimeString.substring(0, 5) : rawTimeString;
+      if (rawTimeString.length >= 5) {
+        formattedTime = rawTimeString.substring(0, 5);
+      }
+    }
+
+    // Format feed_date
+    if (rawDateString != null &&
+        rawDateString!.isNotEmpty &&
+        rawDateString != 'null') {
+      try {
+        final date = DateTime.parse(rawDateString!);
+
+        formattedDate =
+            'Scheduled for ${DateFormat('MMM d, yyyy').format(date)}';
+      } catch (_) {
+        formattedDate = 'Scheduled for $rawDateString';
+      }
     }
 
     final portionLabel = _portionLabel(angle);
@@ -405,8 +476,14 @@ class _ScheduleCard extends StatelessWidget {
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: enabled
-                          ? const [_Palette.salmon, _Palette.peach]
-                          : [Colors.grey.shade300, Colors.grey.shade200],
+                          ? const [
+                              _Palette.salmon,
+                              _Palette.peach,
+                            ]
+                          : [
+                              Colors.grey.shade300,
+                              Colors.grey.shade200,
+                            ],
                     ),
                     borderRadius: BorderRadius.circular(20),
                   ),
@@ -419,7 +496,8 @@ class _ScheduleCard extends StatelessWidget {
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
                     children: [
                       Text(
                         formattedTime,
@@ -432,9 +510,10 @@ class _ScheduleCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        formattedDate != null ? 'Scheduled for $formattedDate' : 'Scheduled feeding time',
+                        formattedDate,
                         style: GoogleFonts.dmSans(
-                          color: _Palette.brownSoft.withOpacity(0.7),
+                          color: _Palette.brownSoft
+                              .withOpacity(0.7),
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
                         ),
@@ -449,7 +528,9 @@ class _ScheduleCard extends StatelessWidget {
                 ),
               ],
             ),
+
             const SizedBox(height: 18),
+
             Row(
               children: [
                 Container(
@@ -487,24 +568,38 @@ class _ScheduleCard extends StatelessWidget {
                     child: LinearProgressIndicator(
                       value: angle / 180,
                       minHeight: 8,
-                      backgroundColor: _Palette.blush.withOpacity(0.5),
+                      backgroundColor:
+                          _Palette.blush.withOpacity(0.5),
                       color: _Palette.salmon,
                     ),
                   ),
                 ),
               ],
             ),
+
             const SizedBox(height: 16),
+
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: onEdit,
-                    icon: const Icon(Icons.edit_rounded, size: 17),
-                    label: Text('Edit', style: GoogleFonts.dmSans(fontWeight: FontWeight.w700)),
+                    icon: const Icon(
+                      Icons.edit_rounded,
+                      size: 17,
+                    ),
+                    label: Text(
+                      'Edit',
+                      style: GoogleFonts.dmSans(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: _Palette.salmon,
-                      side: BorderSide(color: _Palette.salmon.withOpacity(0.45)),
+                      side: BorderSide(
+                        color:
+                            _Palette.salmon.withOpacity(0.45),
+                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),
@@ -515,10 +610,19 @@ class _ScheduleCard extends StatelessWidget {
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline_rounded, size: 17),
-                    label: Text('Delete', style: GoogleFonts.dmSans(fontWeight: FontWeight.w700)),
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      size: 17,
+                    ),
+                    label: Text(
+                      'Delete',
+                      style: GoogleFonts.dmSans(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                     style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFFFEEF0),
+                      backgroundColor:
+                          const Color(0xFFFFEEF0),
                       foregroundColor: Colors.redAccent,
                       elevation: 0,
                       shape: RoundedRectangleBorder(
@@ -535,6 +639,10 @@ class _ScheduleCard extends StatelessWidget {
     );
   }
 }
+
+// ======================================================
+// EMPTY STATE
+// ======================================================
 
 class _EmptyScheduleState extends StatelessWidget {
   const _EmptyScheduleState();
@@ -587,7 +695,8 @@ class _EmptyScheduleState extends StatelessWidget {
                 'Tap "Add feeding time" to create your pet\'s next meal.',
                 textAlign: TextAlign.center,
                 style: GoogleFonts.dmSans(
-                  color: _Palette.brownSoft.withOpacity(0.7),
+                  color:
+                      _Palette.brownSoft.withOpacity(0.7),
                   fontSize: 13,
                   height: 1.45,
                 ),
@@ -600,24 +709,42 @@ class _EmptyScheduleState extends StatelessWidget {
   }
 }
 
+// ======================================================
+// ADD / EDIT SCHEDULE DIALOG
+// ======================================================
+
 class _AddScheduleDialog extends StatefulWidget {
   final Map<String, dynamic>? existing;
 
   const _AddScheduleDialog({this.existing});
 
   @override
-  State<_AddScheduleDialog> createState() => _AddScheduleDialogState();
+  State<_AddScheduleDialog> createState() =>
+      _AddScheduleDialogState();
 }
 
-class _AddScheduleDialogState extends State<_AddScheduleDialog> {
+class _AddScheduleDialogState
+    extends State<_AddScheduleDialog> {
   DateTime _selectedDate = DateTime.now();
   TimeOfDay? _selectedTime;
-  int _angle = 90; // Default preset to 90
+  int _angle = 90;
 
   final List<Map<String, dynamic>> _presets = [
-    {'label': 'Small', 'angle': 45, 'icon': Icons.restaurant},
-    {'label': 'Medium', 'angle': 90, 'icon': Icons.set_meal},
-    {'label': 'Full', 'angle': 180, 'icon': Icons.dinner_dining},
+    {
+      'label': 'Small',
+      'angle': 45,
+      'icon': Icons.restaurant,
+    },
+    {
+      'label': 'Medium',
+      'angle': 90,
+      'icon': Icons.set_meal,
+    },
+    {
+      'label': 'Full',
+      'angle': 180,
+      'icon': Icons.dinner_dining,
+    },
   ];
 
   @override
@@ -625,21 +752,44 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
     super.initState();
 
     if (widget.existing != null) {
-      final rawTime = widget.existing!['feed_time'].toString();
-      if (rawTime.contains('T')) {
-        final dt = DateTime.parse(rawTime);
-        _selectedDate = dt;
-        _selectedTime = TimeOfDay.fromDateTime(dt);
-      } else {
+      // =========================
+      // LOAD FEED DATE
+      // =========================
+
+      final rawDate =
+          widget.existing!['feed_date']?.toString();
+
+      if (rawDate != null &&
+          rawDate.isNotEmpty &&
+          rawDate != 'null') {
+        try {
+          _selectedDate = DateTime.parse(rawDate);
+        } catch (_) {
+          _selectedDate = DateTime.now();
+        }
+      }
+
+      // =========================
+      // LOAD FEED TIME
+      // =========================
+
+      final rawTime =
+          widget.existing!['feed_time'].toString();
+
+      try {
         final timeStr = rawTime.substring(0, 5);
         final parts = timeStr.split(':');
+
         _selectedTime = TimeOfDay(
           hour: int.parse(parts[0]),
           minute: int.parse(parts[1]),
         );
+      } catch (_) {
+        _selectedTime = null;
       }
 
-      _angle = widget.existing!['angle'] as int? ?? 90;
+      _angle =
+          widget.existing!['angle'] as int? ?? 90;
     }
   }
 
@@ -647,8 +797,10 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
-      firstDate: DateTime.now().subtract(const Duration(days: 1)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      firstDate:
+          DateTime.now().subtract(const Duration(days: 1)),
+      lastDate:
+          DateTime.now().add(const Duration(days: 365)),
       builder: (context, child) {
         return Theme(
           data: ThemeData(
@@ -672,7 +824,8 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
   Future<void> _pickTime() async {
     final picked = await showTimePicker(
       context: context,
-      initialTime: _selectedTime ?? TimeOfDay.now(),
+      initialTime:
+          _selectedTime ?? TimeOfDay.now(),
       builder: (context, child) {
         return Theme(
           data: ThemeData(
@@ -699,9 +852,13 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
 
     return AlertDialog(
       backgroundColor: const Color(0xFFFFFDF9),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(28),
+      ),
       title: Text(
-        isEdit ? 'Edit feeding time' : 'Add feeding time',
+        isEdit
+            ? 'Edit feeding time'
+            : 'Add feeding time',
         style: GoogleFonts.fraunces(
           color: _Palette.brownSoft,
           fontWeight: FontWeight.w700,
@@ -710,9 +867,13 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
           children: [
-            // Date Picker
+            // =========================
+            // DATE
+            // =========================
+
             Text(
               'Date',
               style: GoogleFonts.dmSans(
@@ -720,27 +881,41 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
                 color: _Palette.brownSoft,
               ),
             ),
+
             const SizedBox(height: 8),
+
             InkWell(
               onTap: _pickDate,
-              borderRadius: BorderRadius.circular(18),
+              borderRadius:
+                  BorderRadius.circular(18),
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(15),
                 decoration: BoxDecoration(
-                  color: _Palette.blush.withOpacity(0.45),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: _Palette.salmon.withOpacity(0.22)),
+                  color:
+                      _Palette.blush.withOpacity(0.45),
+                  borderRadius:
+                      BorderRadius.circular(18),
+                  border: Border.all(
+                    color:
+                        _Palette.salmon.withOpacity(0.22),
+                  ),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.calendar_today_rounded, color: _Palette.salmon),
+                    const Icon(
+                      Icons.calendar_today_rounded,
+                      color: _Palette.salmon,
+                    ),
                     const SizedBox(width: 10),
                     Text(
-                      DateFormat('EEE, MMM d, yyyy').format(_selectedDate),
+                      DateFormat(
+                        'EEE, MMM d, yyyy',
+                      ).format(_selectedDate),
                       style: GoogleFonts.dmSans(
                         fontSize: 16,
-                        fontWeight: FontWeight.w700,
+                        fontWeight:
+                            FontWeight.w700,
                         color: _Palette.brown,
                       ),
                     ),
@@ -748,9 +923,13 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
                 ),
               ),
             ),
+
             const SizedBox(height: 18),
 
-            // Time Picker
+            // =========================
+            // TIME
+            // =========================
+
             Text(
               'Time',
               style: GoogleFonts.dmSans(
@@ -758,41 +937,60 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
                 color: _Palette.brownSoft,
               ),
             ),
+
             const SizedBox(height: 8),
+
             InkWell(
               onTap: _pickTime,
-              borderRadius: BorderRadius.circular(18),
+              borderRadius:
+                  BorderRadius.circular(18),
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(15),
                 decoration: BoxDecoration(
-                  color: _Palette.blush.withOpacity(0.45),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: _Palette.salmon.withOpacity(0.22)),
+                  color:
+                      _Palette.blush.withOpacity(0.45),
+                  borderRadius:
+                      BorderRadius.circular(18),
+                  border: Border.all(
+                    color:
+                        _Palette.salmon.withOpacity(0.22),
+                  ),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.access_time_rounded, color: _Palette.salmon),
+                    const Icon(
+                      Icons.access_time_rounded,
+                      color: _Palette.salmon,
+                    ),
                     const SizedBox(width: 10),
                     Text(
                       _selectedTime == null
                           ? 'Tap to pick time'
-                          : _selectedTime!.format(context),
+                          : _selectedTime!.format(
+                              context,
+                            ),
                       style: GoogleFonts.dmSans(
                         fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: _selectedTime == null
-                            ? _Palette.muted
-                            : _Palette.brown,
+                        fontWeight:
+                            FontWeight.w700,
+                        color:
+                            _selectedTime == null
+                                ? _Palette.muted
+                                : _Palette.brown,
                       ),
                     ),
                   ],
                 ),
               ),
             ),
+
             const SizedBox(height: 22),
 
-            // Portion Options
+            // =========================
+            // PORTION
+            // =========================
+
             Text(
               'Portion Size 🥣',
               style: GoogleFonts.dmSans(
@@ -800,51 +998,92 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
                 color: _Palette.brownSoft,
               ),
             ),
+
             const SizedBox(height: 10),
+
             Row(
               children: _presets.map((p) {
-                final presetAngle = p['angle'] as int;
-                final isSelected = _angle == presetAngle;
+                final presetAngle =
+                    p['angle'] as int;
+
+                final isSelected =
+                    _angle == presetAngle;
 
                 return Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    padding:
+                        const EdgeInsets.symmetric(
+                      horizontal: 4.0,
+                    ),
                     child: InkWell(
-                      onTap: () => setState(() => _angle = presetAngle),
-                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => setState(
+                        () => _angle =
+                            presetAngle,
+                      ),
+                      borderRadius:
+                          BorderRadius.circular(16),
                       child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        duration:
+                            const Duration(
+                          milliseconds: 180,
+                        ),
+                        padding:
+                            const EdgeInsets.symmetric(
+                          vertical: 14,
+                        ),
                         decoration: BoxDecoration(
                           gradient: isSelected
                               ? const LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [_Palette.salmon, _Palette.peach],
+                                  begin:
+                                      Alignment.topLeft,
+                                  end:
+                                      Alignment.bottomRight,
+                                  colors: [
+                                    _Palette.salmon,
+                                    _Palette.peach,
+                                  ],
                                 )
                               : null,
-                          color: isSelected ? null : _Palette.blush.withOpacity(0.4),
-                          borderRadius: BorderRadius.circular(16),
+                          color: isSelected
+                              ? null
+                              : _Palette.blush
+                                  .withOpacity(0.4),
+                          borderRadius:
+                              BorderRadius.circular(
+                            16,
+                          ),
                           border: Border.all(
                             color: isSelected
                                 ? Colors.transparent
-                                : _Palette.salmon.withOpacity(0.22),
+                                : _Palette.salmon
+                                    .withOpacity(
+                                    0.22,
+                                  ),
                           ),
                         ),
                         child: Column(
                           children: [
                             Icon(
-                              p['icon'] as IconData,
+                              p['icon']
+                                  as IconData,
                               size: 20,
-                              color: isSelected ? Colors.white : _Palette.salmon,
+                              color: isSelected
+                                  ? Colors.white
+                                  : _Palette.salmon,
                             ),
-                            const SizedBox(height: 6),
+                            const SizedBox(
+                              height: 6,
+                            ),
                             Text(
                               '${p['label']}',
-                              style: GoogleFonts.dmSans(
+                              style:
+                                  GoogleFonts.dmSans(
                                 fontSize: 13,
-                                color: isSelected ? Colors.white : _Palette.brown,
-                                fontWeight: FontWeight.w700,
+                                color: isSelected
+                                    ? Colors.white
+                                    : _Palette.brown,
+                                fontWeight:
+                                    FontWeight.w700,
                               ),
                             ),
                           ],
@@ -858,15 +1097,28 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
           ],
         ),
       ),
-      actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+
+      actionsPadding:
+          const EdgeInsets.fromLTRB(
+        18,
+        0,
+        18,
+        18,
+      ),
+
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () =>
+              Navigator.pop(context),
           child: Text(
             'Cancel',
-            style: GoogleFonts.dmSans(color: _Palette.muted, fontWeight: FontWeight.w600),
+            style: GoogleFonts.dmSans(
+              color: _Palette.muted,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
+
         FilledButton(
           onPressed: _selectedTime == null
               ? null
@@ -875,19 +1127,33 @@ class _AddScheduleDialogState extends State<_AddScheduleDialog> {
                       '${_selectedTime!.hour.toString().padLeft(2, '0')}:'
                       '${_selectedTime!.minute.toString().padLeft(2, '0')}:00';
 
-                  Navigator.pop(context, {
-                    'feed_time': timeStr,
-                    'angle': _angle,
-                  });
+                  final dateStr =
+                      DateFormat('yyyy-MM-dd')
+                          .format(_selectedDate);
+
+                  Navigator.pop(
+                    context,
+                    {
+                      'feed_date': dateStr,
+                      'feed_time': timeStr,
+                      'angle': _angle,
+                    },
+                  );
                 },
           style: FilledButton.styleFrom(
             backgroundColor: _Palette.salmon,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius:
+                  BorderRadius.circular(14),
             ),
           ),
-          child: Text(isEdit ? 'Save' : 'Add', style: GoogleFonts.dmSans(fontWeight: FontWeight.w700)),
+          child: Text(
+            isEdit ? 'Save' : 'Add',
+            style: GoogleFonts.dmSans(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
       ],
     );

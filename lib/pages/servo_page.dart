@@ -13,8 +13,8 @@ class ServoPage extends StatefulWidget {
 
   @override
   State<ServoPage> createState() => _ServoPageState();
+  
 }
-
 class _ServoPageState extends State<ServoPage>
     with TickerProviderStateMixin {
   // =========================
@@ -27,6 +27,13 @@ class _ServoPageState extends State<ServoPage>
   // Selected servo angle
 // Selected feeding portion
 String _selectedPortion = 'medium';
+
+// =========================
+  // GATE SERVO
+  // =========================
+
+  bool _isGateOpening = false;
+  bool _isGateClosing = false;
 
 /////////////////
 //String _foodLvel = 'unknown';
@@ -108,7 +115,7 @@ String _selectedPortion = 'medium';
         try {
           final response = await http.get(
             Uri.parse(
-              '192.168.137.173',
+              '192.168.1.9:5000/detection',
             ),
           ).timeout(
             const Duration(seconds: 3),
@@ -253,7 +260,96 @@ Duration _getFeedingDuration(String portion) {
     });
   }
 }
+///////////
+///
+// =========================
+// GATE SERVO - OPEN
+// =========================
 
+Future<void> openGate() async {
+  if (_isGateOpening || _isGateClosing) return;
+
+  setState(() {
+    _isGateOpening = true;
+    _status = '🔓 Opening gate...';
+  });
+
+  try {
+    await supabase
+        .from('gate_control')
+        .update({
+      'mode': 'OPEN',
+      'command': 'open',
+      'angle': 50,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    })
+        .eq('id', 1);
+
+    if (!mounted) return;
+
+    setState(() {
+      _status = '✓ Gate opened';
+    });
+  } catch (e) {
+    if (!mounted) return;
+
+    setState(() {
+      _status = '❌ Gate error: $e';
+    });
+  } finally {
+    if (!mounted) return;
+
+    setState(() {
+      _isGateOpening = false;
+    });
+  }
+}
+///
+///
+// =========================
+// GATE SERVO - CLOSE
+// =========================
+
+Future<void> closeGate() async {
+  if (_isGateOpening || _isGateClosing) return;
+
+  setState(() {
+    _isGateClosing = true;
+    _status = '🔒 Closing gate...';
+  });
+
+  try {
+    await supabase
+        .from('gate_control')
+        .update({
+      'mode': 'CLOSED',
+      'command': 'close',
+      'angle': 0,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    })
+        .eq('id', 1);
+
+    if (!mounted) return;
+
+    setState(() {
+      _status = '✓ Gate closed';
+    });
+  } catch (e) {
+    if (!mounted) return;
+
+    setState(() {
+      _status = '❌ Gate error: $e';
+    });
+  } finally {
+    if (!mounted) return;
+
+    setState(() {
+      _isGateClosing = false;
+    });
+  }
+}
+///
+//////
   // =========================
   // DISPOSE
   // =========================
@@ -325,18 +421,11 @@ Duration _getFeedingDuration(String portion) {
                   // HEADER
                   // =========================
 
-                 
+                    
 
                   const SizedBox(height: 10),
 
-                  Text(
-                    'Realtime pet food controller 🐶',
-                    style: GoogleFonts.dmSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: _brownSoft.withOpacity(0.85),
-                    ),
-                  ),
+                  
 
                   const SizedBox(height: 22),
 
@@ -367,7 +456,7 @@ Duration _getFeedingDuration(String portion) {
                               BorderRadius.circular(24),
                           child: MjpegView( 
                             uri:
-                               'http://smartfeedcam.local:81/stream',
+                               'http://192.168.1.9:5000/video',
                             width: double.infinity,
                             height: 220,
                             fit: BoxFit.cover,
@@ -451,63 +540,7 @@ Duration _getFeedingDuration(String portion) {
                   // PET DETECTION CARD
                   // =========================
 
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(9),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.88),
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: _brownSoft.withOpacity(0.12),
-                          blurRadius: 12,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: const BoxDecoration(
-                                color: _blush,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.pets,
-                                color: _salmon,
-                                size: 18,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Text(
-                              'Pet Detection',
-                              style: GoogleFonts.fraunces(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                                color: _brownSoft,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 14),
-
-                        _buildDetectionPill(),
-
-                        if (_petConfidence > 0) ...[
-                          const SizedBox(height: 14),
-                          _buildConfidenceBar(),
-                        ],
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 26),
+                  
 
                   // =========================
                   // PORTION SELECTORS
@@ -529,6 +562,7 @@ Duration _getFeedingDuration(String portion) {
 
                   Row(
  children: [
+  
     _buildPresetChip(
       label: 'Small',
       subtext: 'Portion',
@@ -577,7 +611,7 @@ Duration _getFeedingDuration(String portion) {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: _salmon.withOpacity(0.4),
+                            color: const Color.fromARGB(255, 15, 1, 0).withOpacity(0.4),  
                             blurRadius: 18,
                             offset: const Offset(0, 8),
                           ),
@@ -601,7 +635,7 @@ Duration _getFeedingDuration(String portion) {
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2.4,
-                                  color: _salmon,
+                                  color: Color.fromARGB(255, 24, 3, 1),
                                 ),
                               )
                             : AnimatedBuilder(
@@ -623,8 +657,110 @@ Duration _getFeedingDuration(String portion) {
                             fontSize: 19,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 1.1,
-                            color: _isFeeding ? _salmon : Colors.white,
+                            color: _isFeeding ? const Color.fromARGB(255, 27, 3, 1) : const Color.fromARGB(255, 126, 7, 96),
                           ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // =========================
+                  // OPEN GATE BUTTON
+                  // =========================
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 58,
+                    child: ElevatedButton.icon(
+                      onPressed:
+                          (_isFeeding ||
+                                  _isGateOpening ||
+                                  _isGateClosing)
+                              ? null
+                              : openGate,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _leafGreen,
+                        disabledBackgroundColor: _blush,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                      ),
+                      icon: _isGateOpening
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.lock_open_rounded,
+                              size: 25,
+                            ),
+                      label: Text(
+                        _isGateOpening
+                            ? 'OPENING...'
+                            : 'OPEN FEEDER',
+                        style: GoogleFonts.dmSans(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // =========================
+                  // CLOSE GATE BUTTON
+                  // =========================
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 58,
+                    child: ElevatedButton.icon(
+                      onPressed:
+                          (_isFeeding ||
+                                  _isGateOpening ||
+                                  _isGateClosing)
+                              ? null
+                              : closeGate,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _brownSoft,
+                        disabledBackgroundColor: _blush,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                      ),
+                      icon: _isGateClosing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.lock_rounded,
+                              size: 25,
+                            ),
+                      label: Text(
+                        _isGateClosing
+                            ? 'CLOSING...'
+                            : 'CLOSE FEEDER',
+                        style: GoogleFonts.dmSans(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
                         ),
                       ),
                     ),
@@ -632,6 +768,9 @@ Duration _getFeedingDuration(String portion) {
 
                   const SizedBox(height: 20),
 
+                  // =========================
+                  // STATUS
+                  // =========================
                   // =========================
                   // STATUS
                   // =========================
@@ -752,7 +891,7 @@ Duration _getFeedingDuration(String portion) {
   }
 
   // =========================
-  // PRESET CHIP
+  // PRESET PORTIONS
   // =========================
 
   Widget _buildPresetChip({
@@ -796,7 +935,7 @@ Duration _getFeedingDuration(String portion) {
             color: isSelected
                 ? null
                 : Colors.white.withOpacity(0.85),
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(28),
             border: Border.all(
               color: isSelected
                   ? Colors.transparent

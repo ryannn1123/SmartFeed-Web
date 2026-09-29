@@ -51,6 +51,7 @@ class _SplashPageState extends State<SplashPage>
       accentColor: Color(0xFF5B9DF5),
       gradientStart: Color(0xFFF6FAFF),
       gradientEnd: Color(0xFFCFE4FF),
+    
     ),
   ];
 
@@ -223,7 +224,7 @@ child: Stack(
         color: data.accentColor.withOpacity(0.15),
       ),
       Positioned(
-        top: size.height * 0.19,
+        top: size.height * 0.19, 
         left: 30,
         child: Icon(
           Icons.pets_rounded,

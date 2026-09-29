@@ -787,13 +787,13 @@ class _StatCard extends StatelessWidget {
     required this.icon,
     required this.color,
   });
-
+//TOTAL FEEDINGS
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.92),
+        color: const Color.fromARGB(255, 252, 250, 251).withOpacity(0.92),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: color.withOpacity(0.3)),
         boxShadow: [

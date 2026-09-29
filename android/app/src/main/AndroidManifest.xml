@@ -1,8 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/> 
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
 
     <application
         android:label="smartfeed"
@@ -14,12 +15,26 @@
         <activity
             android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
             android:exported="true">
+
             <intent-filter android:label="flutter_web_auth_2">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="smartfeed"/>
             </intent-filter>
+
+
+        <!-- Password reset callback -->
+    <intent-filter>
+    <action android:name="android.intent.action.VIEW"/>
+    <category android:name="android.intent.category.DEFAULT"/>
+    <category android:name="android.intent.category.BROWSABLE"/>
+    <data
+        android:scheme="smartfeed"
+        android:host="reset-password"/>
+</intent-filter>
+
+
         </activity>
 
         <!-- Main Activity -->
@@ -32,16 +47,30 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
+            <!-- Normal app launch -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
+            <!-- Google OAuth callback -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="smartfeed" android:host="login-callback"/>
+                <data
+                    android:scheme="smartfeed"
+                    android:host="login-callback"/>
+            </intent-filter>
+
+            <!-- Password reset callback -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="smartfeed"
+                    android:host="reset-password"/>
             </intent-filter>
 
         </activity>
@@ -51,4 +80,5 @@
             android:value="2"/>
 
     </application>
+
 </manifest>

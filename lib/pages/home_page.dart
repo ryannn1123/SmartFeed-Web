@@ -1,6 +1,12 @@
+import 'package:SmartFeed/services/ai_recommendation_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'
-    show PostgresChangeEvent, PostgresChangeFilter, PostgresChangeFilterType, RealtimeChannel;
+    show
+        PostgresChangeEvent,
+        PostgresChangeFilter,
+        PostgresChangeFilterType,
+        RealtimeChannel;
+
 import '../main.dart';
 import 'servo_page.dart';
 import 'schedule_page.dart';
@@ -21,16 +27,20 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
 
-  // Populated from Supabase (sensor.level, id 1), written by the
-  // ESP32's HC-SR04 ultrasonic sensor. Raw values: full / medium / small.
-  // Defaults to 'unknown' until the first successful read.
+  // ============================================================
+  // FOOD LEVEL
+  // ============================================================
+
   String _foodLevel = 'unknown';
   RealtimeChannel? _foodLevelChannel;
 
-  // Tracks whether we've already shown the low-food alert for the
-  // current "low" streak, so it doesn't pop up again every 5 seconds —
-  // only when it transitions from OK to low.
+  // Prevents the low-food alert from appearing repeatedly
+  // while the food level remains low.
   bool _lowAlertShown = false;
+
+  // ============================================================
+  // PAGES
+  // ============================================================
 
   final List<Widget> _pages = const [
     ServoPage(),
@@ -38,13 +48,21 @@ class _HomePageState extends State<HomePage> {
     HistoryPage(),
     VetPage(),
     PetRegistrationPage(),
+    AIRecommendationPage(),
   ];
 
-  static const Color _coralPink = Color(0xFFFF9E89);
-  static const Color _warmSand  = Color(0xFFFFD8A0);
-  static const Color _inactive  = Color(0xFF8A92A3);
+  // ============================================================
+  // COLORS
+  // ============================================================
 
-  // Colors + fractions keyed by the raw value stored in sensor.level.
+  static const Color _coralPink = Color(0xFFFF9E89);
+  static const Color _warmSand = Color(0xFFFFD8A0);
+  static const Color _inactive = Color(0xFF8A92A3);
+
+  // ============================================================
+  // FOOD LEVEL COLORS
+  // ============================================================
+
   static const Map<String, Color> _levelColors = {
     'full': Color(0xFF3FA24A),
     'medium': Color(0xFFC98A1F),
@@ -59,8 +77,7 @@ class _HomePageState extends State<HomePage> {
     'unknown': 0.0,
   };
 
-  // How each raw value is displayed to the user — 'small' from the
-  // sensor means the hopper is low, so it's shown as "LOW".
+  // Sensor stores "small" when hopper is low.
   static const Map<String, String> _levelLabels = {
     'full': 'Full',
     'medium': 'Medium',
@@ -68,42 +85,115 @@ class _HomePageState extends State<HomePage> {
     'unknown': 'Unknown',
   };
 
+  // ============================================================
+  // NAVIGATION ITEMS
+  // ============================================================
+
   final List<Map<String, dynamic>> _navItems = const [
-    {'icon': Icons.tune_rounded, 'label': 'Control'},
-    {'icon': Icons.schedule_rounded, 'label': 'Schedule'},
-    {'icon': Icons.history_rounded, 'label': 'History'},
-    {'icon': Icons.health_and_safety_rounded, 'label': 'Vet'},
-    {'icon': Icons.pets_rounded, 'label': 'Pets'},
+    {
+      'icon': Icons.tune_rounded,
+      'label': 'Contoller',
+    },
+    {
+      'icon': Icons.schedule_rounded,
+      'label': 'Schedule',
+    },
+    {
+      'icon': Icons.history_rounded,
+      'label': 'History',
+    },
+    {
+      'icon': Icons.health_and_safety_rounded,
+      'label': 'Vet',
+    },
+    {
+      'icon': Icons.pets_rounded,
+      'label': 'Pets',
+    },
+    {
+      'icon': Icons.auto_awesome_rounded,
+      'label': 'AI',
+    },
   ];
 
-  Future<void> _signOut() async {
-    await supabase.auth.signOut();
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const LoginPage()),
-    );
-  }
+  // ============================================================
+  // FOOD LEVEL GETTERS
+  // ============================================================
 
-  Color get _foodLevelColor => _levelColors[_foodLevel] ?? _inactive;
-  double get _foodLevelFraction => _levelFraction[_foodLevel] ?? 0.0;
-  String get _foodLevelLabel => _levelLabels[_foodLevel] ?? 'Unknown';
+  Color get _foodLevelColor =>
+      _levelColors[_foodLevel] ?? _inactive;
+
+  double get _foodLevelFraction =>
+      _levelFraction[_foodLevel] ?? 0.0;
+
+  String get _foodLevelLabel =>
+      _levelLabels[_foodLevel] ?? 'Unknown';
+
+  // ============================================================
+  // INIT
+  // ============================================================
 
   @override
   void initState() {
     super.initState();
-    // One initial fetch so the badge isn't blank while the Realtime
-    // subscription connects.
+
+    // Initial food-level fetch
     _fetchFoodLevel();
+
+    // Realtime food-level updates
     _subscribeToFoodLevel();
   }
+
+  // ============================================================
+  // DISPOSE
+  // ============================================================
 
   @override
   void dispose() {
     if (_foodLevelChannel != null) {
       supabase.removeChannel(_foodLevelChannel!);
     }
+
     super.dispose();
   }
+
+  // ============================================================
+  // SIGN OUT
+  // ============================================================
+
+  Future<void> _signOut() async {
+    try {
+      // Sign out from Supabase
+      await supabase.auth.signOut();
+
+      if (!mounted) return;
+
+      // Remove HomePage and all previous pages,
+      // then return to LoginPage.
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (context) => const LoginPage(),
+        ),
+        (route) => false,
+      );
+    } catch (e) {
+      debugPrint('Sign out error: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Failed to sign out. Please try again.',
+          ),
+        ),
+      );
+    }
+  }
+
+  // ============================================================
+  // FOOD LEVEL REALTIME
+  // ============================================================
 
   void _subscribeToFoodLevel() {
     _foodLevelChannel = supabase
@@ -119,13 +209,19 @@ class _HomePageState extends State<HomePage> {
           ),
           callback: (payload) {
             final row = payload.newRecord;
+
             if (!mounted || row.isEmpty) return;
 
-            final level = (row['level'] as String?)?.toLowerCase();
-            final alertSent = row['alert_sent'] as bool? ?? false;
+            final level =
+                (row['level'] as String?)?.toLowerCase();
+
+            final alertSent =
+                row['alert_sent'] as bool? ?? false;
 
             if (level != null && level != _foodLevel) {
-              setState(() => _foodLevel = level);
+              setState(() {
+                _foodLevel = level;
+              });
             }
 
             if (alertSent && !_lowAlertShown) {
@@ -139,6 +235,10 @@ class _HomePageState extends State<HomePage> {
         .subscribe();
   }
 
+  // ============================================================
+  // FETCH FOOD LEVEL
+  // ============================================================
+
   Future<void> _fetchFoodLevel() async {
     try {
       final data = await supabase
@@ -149,24 +249,32 @@ class _HomePageState extends State<HomePage> {
 
       if (!mounted) return;
 
-      final level = (data['level'] as String?)?.toLowerCase();
-      final alertSent = data['alert_sent'] as bool? ?? false;
+      final level =
+          (data['level'] as String?)?.toLowerCase();
+
+      final alertSent =
+          data['alert_sent'] as bool? ?? false;
 
       if (level != null && level != _foodLevel) {
-        setState(() => _foodLevel = level);
+        setState(() {
+          _foodLevel = level;
+        });
       }
 
       if (alertSent && !_lowAlertShown) {
         _lowAlertShown = true;
         _showLowFoodAlert();
       } else if (!alertSent) {
-        // Level recovered — arm the alert again for next time it's low.
         _lowAlertShown = false;
       }
     } catch (_) {
-      // Transient network error — keep showing the last known level.
+      // Keep showing the last known food level.
     }
   }
+
+  // ============================================================
+  // LOW FOOD ALERT
+  // ============================================================
 
   void _showLowFoodAlert() {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -175,20 +283,30 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: const Color(0xFFD8433C),
         content: const Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.white),
+            Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.white,
+            ),
             SizedBox(width: 10),
             Expanded(
               child: Text(
                 'Food is running low — time to refill the hopper!',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ],
         ),
-        duration: const Duration(seconds: 4),
+        duration: Duration(seconds: 4),
       ),
     );
   }
+
+  // ============================================================
+  // FOOD LEVEL DETAILS
+  // ============================================================
 
   void _showFoodLevelDetails() {
     showModalBottomSheet(
@@ -197,11 +315,19 @@ class _HomePageState extends State<HomePage> {
       builder: (_) {
         final color = _foodLevelColor;
         final fraction = _foodLevelFraction;
+
         return Container(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+          padding: const EdgeInsets.fromLTRB(
+            24,
+            20,
+            24,
+            32,
+          ),
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -214,7 +340,9 @@ class _HomePageState extends State<HomePage> {
                   borderRadius: BorderRadius.circular(4),
                 ),
               ),
+
               const SizedBox(height: 20),
+
               Container(
                 width: 64,
                 height: 64,
@@ -222,28 +350,39 @@ class _HomePageState extends State<HomePage> {
                   color: color.withOpacity(0.15),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.rice_bowl_rounded, color: color, size: 30),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                'Food Level: $_foodLevelLabel',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF172033),
+                child: Icon(
+                  Icons.rice_bowl_rounded,
+                  color: color,
+                  size: 30,
                 ),
               ),
+
               const SizedBox(height: 14),
+
+              Text(
+                'Food Level: $_foodLevelLabel',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF172033),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: LinearProgressIndicator(
                   value: fraction,
                   minHeight: 10,
                   backgroundColor: const Color(0xFFEFF1F5),
-                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(color),
                 ),
               ),
+
               const SizedBox(height: 16),
+
               Text(
                 _foodLevel == 'small'
                     ? 'The hopper is running low — consider refilling soon.'
@@ -261,25 +400,42 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // ============================================================
+  // FOOD LEVEL BUTTON
+  // ============================================================
+
   Widget _buildFoodLevelButton() {
     final color = _foodLevelColor;
+
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: GestureDetector(
         onTap: _showFoodLevelDetails,
         behavior: HitTestBehavior.opaque,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
           decoration: BoxDecoration(
             color: color.withOpacity(0.15),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: color.withOpacity(0.4), width: 1),
+            border: Border.all(
+              color: color.withOpacity(0.4),
+              width: 1,
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.rice_bowl_rounded, size: 16, color: color),
+              Icon(
+                Icons.rice_bowl_rounded,
+                size: 16,
+                color: color,
+              ),
+
               const SizedBox(width: 6),
+
               Text(
                 _foodLevelLabel.toUpperCase(),
                 style: TextStyle(
@@ -296,20 +452,34 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // ============================================================
+  // BUILD
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
     final user = supabase.auth.currentUser;
-    final userName = user?.userMetadata?['full_name'] ?? 'Pet Parent';
-    final userAvatar = user?.userMetadata?['avatar_url'];
+
+    final userName =
+        user?.userMetadata?['full_name'] ?? 'Pet Parent';
+
+    final userAvatar =
+        user?.userMetadata?['avatar_url'];
 
     return Scaffold(
       extendBody: true,
       backgroundColor: const Color(0xFFFFFDF9),
+
+      // ========================================================
+      // APP BAR
+      // ========================================================
+
       appBar: AppBar(
         backgroundColor: _coralPink,
         elevation: 0,
         centerTitle: false,
         titleSpacing: 18,
+
         title: Row(
           children: [
             Container(
@@ -337,7 +507,9 @@ class _HomePageState extends State<HomePage> {
                 size: 22,
               ),
             ),
+
             const SizedBox(width: 10),
+
             RichText(
               text: const TextSpan(
                 children: [
@@ -364,8 +536,14 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
+
+        // ======================================================
+        // APP BAR ACTIONS
+        // ======================================================
+
         actions: [
           _buildFoodLevelButton(),
+
           PopupMenuButton<void>(
             offset: const Offset(0, 48),
             color: Colors.white,
@@ -373,13 +551,17 @@ class _HomePageState extends State<HomePage> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
             ),
+
             child: Padding(
               padding: const EdgeInsets.only(right: 14),
               child: CircleAvatar(
                 radius: 18,
                 backgroundColor: _coralPink,
-                backgroundImage:
-                    userAvatar != null ? NetworkImage(userAvatar) : null,
+
+                backgroundImage: userAvatar != null
+                    ? NetworkImage(userAvatar)
+                    : null,
+
                 child: userAvatar == null
                     ? Text(
                         userName.isNotEmpty
@@ -393,11 +575,17 @@ class _HomePageState extends State<HomePage> {
                     : null,
               ),
             ),
+
+            // ==================================================
+            // PROFILE MENU
+            // ==================================================
+
             itemBuilder: (_) => [
-              PopupMenuItem(
+              PopupMenuItem<void>(
                 enabled: false,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
                   children: [
                     Text(
                       userName,
@@ -406,6 +594,7 @@ class _HomePageState extends State<HomePage> {
                         color: Color(0xFF172033),
                       ),
                     ),
+
                     Text(
                       user?.email ?? '',
                       style: const TextStyle(
@@ -416,14 +605,25 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
+
               const PopupMenuDivider(),
-              PopupMenuItem(
+
+              // =================================================
+              // FIXED SIGN OUT BUTTON
+              // =================================================
+
+              PopupMenuItem<void>(
                 onTap: _signOut,
                 child: const Row(
                   children: [
-                    Icon(Icons.logout_rounded,
-                        size: 18, color: Color(0xFFFF6F61)),
+                    Icon(
+                      Icons.logout_rounded,
+                      size: 18,
+                      color: Color(0xFFFF6F61),
+                    ),
+
                     SizedBox(width: 8),
+
                     Text('Sign out'),
                   ],
                 ),
@@ -432,6 +632,11 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+
+      // ========================================================
+      // BODY
+      // ========================================================
+
       body: Stack(
         children: [
           const _PetBackground(),
@@ -439,11 +644,22 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
 
-      // 🌟 REDESIGNED COMPACT FLOATING NAVIGATION BAR
+      // ========================================================
+      // BOTTOM NAVIGATION
+      // ========================================================
+
       bottomNavigationBar: SafeArea(
         child: Container(
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          margin: const EdgeInsets.fromLTRB(
+            16,
+            0,
+            16,
+            12,
+          ),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 4,
+            vertical: 8,
+          ),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(28),
@@ -455,57 +671,88 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: List.generate(_navItems.length, (index) {
-              final isSelected = _currentIndex == index;
-              final item = _navItems[index];
 
-              return GestureDetector(
-                onTap: () {
-                  setState(() => _currentIndex = index);
-                },
-                behavior: HitTestBehavior.opaque,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? _warmSand.withOpacity(0.55)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        item['icon'] as IconData,
-                        size: 22,
-                        color: isSelected ? _coralPink : _inactive,
+          child: Row(
+            children: List.generate(
+              _navItems.length,
+              (index) {
+                final isSelected =
+                    _currentIndex == index;
+
+                final item = _navItems[index];
+
+                return Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _currentIndex = index;
+                      });
+                    },
+                    behavior: HitTestBehavior.opaque,
+
+                    child: AnimatedContainer(
+                      duration:
+                          const Duration(milliseconds: 200),
+
+                      padding:
+                          const EdgeInsets.symmetric(
+                        horizontal: 2,
+                        vertical: 6,
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        item['label'] as String,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight:
-                              isSelected ? FontWeight.w800 : FontWeight.w600,
-                          color: isSelected ? _coralPink : _inactive,
-                        ),
+
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? _warmSand.withOpacity(0.55)
+                            : Colors.transparent,
+                        borderRadius:
+                            BorderRadius.circular(20),
                       ),
-                    ],
+
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            item['icon'] as IconData,
+                            size: 22,
+                            color: isSelected
+                                ? _coralPink
+                                : _inactive,
+                          ),
+
+                          const SizedBox(height: 3),
+
+                          Text(
+                            item['label'] as String,
+                            maxLines: 1,
+                            overflow:
+                                TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: isSelected
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                              color: isSelected
+                                  ? _coralPink
+                                  : _inactive,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              );
-            }),
+                );
+              },
+            ),
           ),
         ),
       ),
 
-      // PetBot now floats here on every tab, including Schedule —
-      // "Add feeding time" moved to the top of SchedulePage, so this
-      // spot no longer needs to be reserved for it.
+      // ========================================================
+      // PETBOT
+      // ========================================================
+
       floatingActionButton: const Padding(
         padding: EdgeInsets.only(bottom: 20),
         child: FloatingChatbot(),
@@ -513,6 +760,10 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
+// ================================================================
+// PET BACKGROUND
+// ================================================================
 
 class _PetBackground extends StatelessWidget {
   const _PetBackground();
@@ -526,42 +777,51 @@ class _PetBackground extends StatelessWidget {
             top: -90,
             left: -70,
             child: _Blob(
-                size: 210,
-                color: const Color(0xFFFF9E89),
-                opacity: 0.34),
+              size: 210,
+              color: const Color(0xFFFF9E89),
+              opacity: 0.34,
+            ),
           ),
+
           Positioned(
             bottom: 70,
             right: -85,
             child: _Blob(
-                size: 230,
-                color: const Color(0xFFFFBFA3),
-                opacity: 0.28),
+              size: 230,
+              color: const Color(0xFFFFBFA3),
+              opacity: 0.28,
+            ),
           ),
+
           Positioned(
             bottom: -65,
             left: -70,
             child: _Blob(
-                size: 210,
-                color: const Color(0xFFFFD8A0),
-                opacity: 0.34),
+              size: 210,
+              color: const Color(0xFFFFD8A0),
+              opacity: 0.34,
+            ),
           ),
+
           Positioned(
             top: 145,
             right: 24,
             child: Icon(
               Icons.pets_rounded,
               size: 34,
-              color: const Color(0xFFFF9E89).withOpacity(0.08),
+              color: const Color(0xFFFF9E89)
+                  .withOpacity(0.08),
             ),
           ),
+
           Positioned(
             top: 250,
             left: 28,
             child: Icon(
               Icons.favorite_rounded,
               size: 24,
-              color: const Color(0xFFFFBFA3).withOpacity(0.1),
+              color: const Color(0xFFFFBFA3)
+                  .withOpacity(0.1),
             ),
           ),
         ],
@@ -569,6 +829,10 @@ class _PetBackground extends StatelessWidget {
     );
   }
 }
+
+// ================================================================
+// BLOB
+// ================================================================
 
 class _Blob extends StatelessWidget {
   final double size;
