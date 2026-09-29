@@ -34,7 +34,6 @@ class _RegisterPageState extends State<RegisterPage>
   static const Color cream = Color(0xFFFFEFC4);
   static const Color brown = Color(0xFF5B3A29);
   static const Color brownSoft = Color(0xFF7A3E2A);
-  static const Color muted = Color(0xFFAD8A79);
 
   @override
   void initState() {

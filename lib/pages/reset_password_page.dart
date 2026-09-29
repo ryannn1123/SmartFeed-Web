@@ -20,7 +20,6 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
   bool _obscureConfirmPassword = true;
 
   static const Color salmon = Color(0xFFFA7268);
-  static const Color peach = Color(0xFFFF9E89);
   static const Color blush = Color(0xFFFFD6C4);
   static const Color cream = Color(0xFFFFEFC4);
   static const Color brown = Color(0xFF5B3A29);
