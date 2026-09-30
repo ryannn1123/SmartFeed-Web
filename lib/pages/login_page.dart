@@ -738,7 +738,7 @@ class _LoginPageState extends State<LoginPage>
                                           ),
                                         ],
                                       ),
-                                      child: Row(
+                                      child: const Row(
                                         children: [
                                           Expanded(
                                             child:
@@ -752,7 +752,7 @@ class _LoginPageState extends State<LoginPage>
                                                       .salmon,
                                             ),
                                           ),
-                                          const SizedBox(
+                                          SizedBox(
                                             width: 6,
                                           ),
                                           Expanded(
@@ -766,7 +766,7 @@ class _LoginPageState extends State<LoginPage>
                                                   primaryOrange,
                                             ),
                                           ),
-                                          const SizedBox(
+                                          SizedBox(
                                             width: 6,
                                           ),
                                           Expanded(
@@ -777,12 +777,12 @@ class _LoginPageState extends State<LoginPage>
                                               title:
                                                   "AI Assistant",
                                               color:
-                                                  const Color(
+                                                  Color(
                                                 0xFFE0A438,
                                               ),
                                             ),
                                           ),
-                                          const SizedBox(
+                                          SizedBox(
                                             width: 6,
                                           ),
                                           Expanded(
@@ -793,7 +793,7 @@ class _LoginPageState extends State<LoginPage>
                                               title:
                                                   "Watch Live",
                                               color:
-                                                  const Color(
+                                                  Color(
                                                 0xFF6FAE7C,
                                               ),
                                             ),

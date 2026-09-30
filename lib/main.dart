@@ -37,16 +37,26 @@ Future<void> main() async {
 Supabase.instance.client.auth.onAuthStateChange.listen((data) {
   final event = data.event;
 
+  print('SUPABASE AUTH EVENT: $event');
+
   if (event == AuthChangeEvent.passwordRecovery) {
     print('=================================');
     print('PASSWORD RECOVERY EVENT RECEIVED');
     print('=================================');
 
-    navigatorKey.currentState?.push(
-      MaterialPageRoute(
-        builder: (_) => const ResetPasswordPage(),
-      ),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigator = navigatorKey.currentState;
+
+      if (navigator != null) {
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => const ResetPasswordPage(),
+          ),
+        );
+      } else {
+        print('Navigator is not ready yet.');
+      }
+    });
   }
 });
 
@@ -64,6 +74,7 @@ print(notificationSettings.authorizationStatus);
 print('=================================');
 
   // Get the FCM token
+  // ignore: unused_local_variable
   final fcmToken = await FirebaseMessaging.instance.getToken();
 
   FirebaseMessaging.onMessage.listen(

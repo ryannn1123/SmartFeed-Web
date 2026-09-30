@@ -613,7 +613,7 @@ Future<void> closeGate() async {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color.fromARGB(255, 15, 1, 0).withOpacity(0.4),  
+                            color: _salmon.withOpacity(0.4),
                             blurRadius: 18,
                             offset: const Offset(0, 8),
                           ),
@@ -637,7 +637,7 @@ Future<void> closeGate() async {
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2.4,
-                                  color: Color.fromARGB(255, 24, 3, 1),
+                                  color: Colors.white,
                                 ),
                               )
                             : AnimatedBuilder(
@@ -649,6 +649,7 @@ Future<void> closeGate() async {
                                     child: const Icon(
                                       Icons.pets,
                                       size: 26,
+                                      color: Colors.white,
                                     ),
                                   );
                                 },
@@ -659,7 +660,7 @@ Future<void> closeGate() async {
                             fontSize: 19,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 1.1,
-                            color: _isFeeding ? const Color.fromARGB(255, 27, 3, 1) : const Color.fromARGB(255, 126, 7, 96),
+                            color: Colors.white,
                           ),
                         ),
                       ),
@@ -670,48 +671,73 @@ Future<void> closeGate() async {
 
                   // =========================
                   // OPEN GATE BUTTON
+                  // (same salmon→peach gradient as FEED NOW,
+                  // so the whole feeder-control group reads as
+                  // one family of actions)
                   // =========================
 
                   SizedBox(
                     width: double.infinity,
                     height: 58,
-                    child: ElevatedButton.icon(
-                      onPressed:
-                          (_isFeeding ||
-                                  _isGateOpening ||
-                                  _isGateClosing)
-                              ? null
-                              : openGate,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _leafGreen,
-                        disabledBackgroundColor: _blush,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(22),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors:
+                              (_isFeeding || _isGateOpening || _isGateClosing)
+                                  ? [_blush, _blush]
+                                  : [_salmon, _peach],
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _salmon.withOpacity(0.35),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
                       ),
-                      icon: _isGateOpening
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.4,
+                      child: ElevatedButton.icon(
+                        onPressed:
+                            (_isFeeding ||
+                                    _isGateOpening ||
+                                    _isGateClosing)
+                                ? null
+                                : openGate,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                        ),
+                        icon: _isGateOpening
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.4,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.lock_open_rounded,
+                                size: 25,
                                 color: Colors.white,
                               ),
-                            )
-                          : const Icon(
-                              Icons.lock_open_rounded,
-                              size: 25,
-                            ),
-                      label: Text(
-                        _isGateOpening
-                            ? 'OPENING...'
-                            : 'OPEN FEEDER',
-                        style: GoogleFonts.dmSans(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.8,
+                        label: Text(
+                          _isGateOpening
+                              ? 'OPENING...'
+                              : 'OPEN FEEDER',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),
@@ -721,48 +747,73 @@ Future<void> closeGate() async {
 
                   // =========================
                   // CLOSE GATE BUTTON
+                  // (same gradient family, slightly deeper tone
+                  // via _brown so it still reads as "close" next
+                  // to "open" without breaking the palette)
                   // =========================
 
                   SizedBox(
                     width: double.infinity,
                     height: 58,
-                    child: ElevatedButton.icon(
-                      onPressed:
-                          (_isFeeding ||
-                                  _isGateOpening ||
-                                  _isGateClosing)
-                              ? null
-                              : closeGate,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _brownSoft,
-                        disabledBackgroundColor: _blush,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(22),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors:
+                              (_isFeeding || _isGateOpening || _isGateClosing)
+                                  ? [_blush, _blush]
+                                  : [_brownSoft, _salmon],
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _brownSoft.withOpacity(0.35),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
                       ),
-                      icon: _isGateClosing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.4,
+                      child: ElevatedButton.icon(
+                        onPressed:
+                            (_isFeeding ||
+                                    _isGateOpening ||
+                                    _isGateClosing)
+                                ? null
+                                : closeGate,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                        ),
+                        icon: _isGateClosing
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.4,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.lock_rounded,
+                                size: 25,
                                 color: Colors.white,
                               ),
-                            )
-                          : const Icon(
-                              Icons.lock_rounded,
-                              size: 25,
-                            ),
-                      label: Text(
-                        _isGateClosing
-                            ? 'CLOSING...'
-                            : 'CLOSE FEEDER',
-                        style: GoogleFonts.dmSans(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.8,
+                        label: Text(
+                          _isGateClosing
+                              ? 'CLOSING...'
+                              : 'CLOSE FEEDER',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),

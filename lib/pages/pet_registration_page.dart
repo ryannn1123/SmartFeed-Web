@@ -1,3 +1,4 @@
+
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -8,7 +9,6 @@ import '../main.dart';
 
 // =========================
 // SHARED PALETTE
-// (matches servo_page.dart / schedule_page.dart / history_page.dart / vet_page.dart)
 // =========================
 
 class _Palette {
@@ -25,18 +25,22 @@ class PetRegistrationPage extends StatefulWidget {
   const PetRegistrationPage({super.key});
 
   @override
-  State<PetRegistrationPage> createState() => _PetRegistrationPageState();
+  State<PetRegistrationPage> createState() =>
+      _PetRegistrationPageState();
 }
 
 class _PetRegistrationPageState extends State<PetRegistrationPage> {
   final _nameController = TextEditingController();
-  final _breedController = TextEditingController();
   final _ageController = TextEditingController();
 
+  final _supabase = Supabase.instance.client;
 
   String _petType = 'Dog';
+  String _gender = 'Male';
+
   bool _loading = false;
   bool _fetching = true;
+
   int? _editingPetId;
 
   List<Map<String, dynamic>> _pets = [];
@@ -50,7 +54,6 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
   @override
   void dispose() {
     _nameController.dispose();
-    _breedController.dispose();
     _ageController.dispose();
     super.dispose();
   }
@@ -65,13 +68,13 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
     setState(() => _fetching = true);
 
     try {
-      final userId = supabase.auth.currentUser?.id;
+      final userId = _supabase.auth.currentUser?.id;
 
       if (userId == null) {
         throw Exception('User is not logged in.');
       }
 
-      final res = await supabase
+      final res = await _supabase
           .from('pets')
           .select()
           .eq('owner_id', userId)
@@ -92,11 +95,6 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
   }
 
   // ============================================================
-  // SELECT PHOTOS
-  // ============================================================
-
-
-  // ============================================================
   // SHOW REGISTER DIALOG
   // ============================================================
 
@@ -110,13 +108,16 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
         title: 'Register New Pet',
         buttonText: 'Register Pet',
         nameController: _nameController,
-        breedController: _breedController,
         ageController: _ageController,
         petType: _petType,
+        gender: _gender,
         loading: _loading,
         requirePhoto: true,
         onPetTypeChanged: (value) {
           _petType = value;
+        },
+        onGenderChanged: (value) {
+          _gender = value;
         },
         onSubmit: (selectedImages) async {
           final success = await _savePet(selectedImages);
@@ -133,13 +134,23 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
   // SHOW EDIT DIALOG
   // ============================================================
 
-  Future<void> _showEditDialog(Map<String, dynamic> pet) async {
+  Future<void> _showEditDialog(
+    Map<String, dynamic> pet,
+  ) async {
     setState(() {
       _editingPetId = pet['id'] as int;
-      _nameController.text = pet['pet_name']?.toString() ?? '';
-      _petType = pet['pet_type']?.toString() ?? 'Dog';
-      _breedController.text = pet['breed']?.toString() ?? '';
-      _ageController.text = pet['age']?.toString() ?? '';
+
+      _nameController.text =
+          pet['pet_name']?.toString() ?? '';
+
+      _petType =
+          pet['pet_type']?.toString() ?? 'Dog';
+
+      _ageController.text =
+          pet['age']?.toString() ?? '';
+
+      _gender =
+          pet['gender']?.toString() ?? 'Male';
     });
 
     await showDialog<void>(
@@ -149,13 +160,16 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
         title: 'Edit Pet',
         buttonText: 'Save Changes',
         nameController: _nameController,
-        breedController: _breedController,
         ageController: _ageController,
         petType: _petType,
+        gender: _gender,
         loading: _loading,
         requirePhoto: false,
         onPetTypeChanged: (value) {
           _petType = value;
+        },
+        onGenderChanged: (value) {
+          _gender = value;
         },
         onSubmit: (selectedImages) async {
           final success = await _savePet(selectedImages);
@@ -172,17 +186,30 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
   // SAVE PET
   // ============================================================
 
-  Future<bool> _savePet(List<XFile> selectedImages) async {
-    if (_nameController.text.trim().isEmpty ||
-        _breedController.text.trim().isEmpty ||
-        _ageController.text.trim().isEmpty) {
+  Future<bool> _savePet(
+    List<XFile> selectedImages,
+  ) async {
+    final name = _nameController.text.trim();
+    final ageText = _ageController.text.trim();
+
+    if (name.isEmpty || ageText.isEmpty) {
       _showMessage('Please complete all fields.');
       return false;
     }
 
+    final age = int.tryParse(ageText);
+
+    if (age == null || age < 0) {
+      _showMessage('Please enter a valid age.');
+      return false;
+    }
+
     // New pets require at least one photo.
-    if (_editingPetId == null && selectedImages.isEmpty) {
-      _showMessage('Please add at least one photo of your pet.');
+    if (_editingPetId == null &&
+        selectedImages.isEmpty) {
+      _showMessage(
+        'Please add at least one photo of your pet.',
+      );
       return false;
     }
 
@@ -191,7 +218,7 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
     setState(() => _loading = true);
 
     try {
-      final userId = supabase.auth.currentUser?.id;
+      final userId = _supabase.auth.currentUser?.id;
 
       if (userId == null) {
         throw Exception('User is not logged in.');
@@ -199,10 +226,10 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
 
       final data = {
         'owner_id': userId,
-        'pet_name': _nameController.text.trim(),
+        'pet_name': name,
         'pet_type': _petType,
-        'breed': _breedController.text.trim(),
-        'age': int.tryParse(_ageController.text.trim()) ?? 0,
+        'age': age,
+        'gender': _gender,
       };
 
       // ========================================================
@@ -210,7 +237,7 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
       // ========================================================
 
       if (_editingPetId == null) {
-        final insertedPet = await supabase
+        final insertedPet = await _supabase
             .from('pets')
             .insert(data)
             .select('id')
@@ -225,15 +252,17 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
         );
 
         // Save photo paths to database.
-        await supabase
+        await _supabase
             .from('pets')
             .update({
               'photo_paths': photoPaths,
             })
-            .eq('id', petId);
+            .eq('id', petId)
+            .eq('owner_id', userId);
 
         _showMessage(
-          'Pet registered with ${photoPaths.length} photo(s) 🐾',
+          'Pet registered with '
+          '${photoPaths.length} photo(s) 🐾',
         );
       }
 
@@ -242,30 +271,35 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
       // ========================================================
 
       else {
-        await supabase
+        await _supabase
             .from('pets')
             .update(data)
-            .eq('id', _editingPetId as int);
+            .eq('id', _editingPetId as int)
+            .eq('owner_id', userId);
 
-        // Only upload if the user selected new photos.
+        // Upload new photos if selected.
         if (selectedImages.isNotEmpty) {
           final photoPaths = await _uploadPetPhotos(
             _editingPetId as int,
             selectedImages,
           );
 
-          await supabase
+          await _supabase
               .from('pets')
               .update({
                 'photo_paths': photoPaths,
               })
-              .eq('id', _editingPetId as int);
+              .eq('id', _editingPetId as int)
+              .eq('owner_id', userId);
 
           _showMessage(
-            'Pet updated with ${photoPaths.length} photo(s) 🐾',
+            'Pet updated with '
+            '${photoPaths.length} photo(s) 🐾',
           );
         } else {
-          _showMessage('Pet updated successfully 🐾');
+          _showMessage(
+            'Pet updated successfully 🐾',
+          );
         }
       }
 
@@ -292,7 +326,7 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
     int petId,
     List<XFile> images,
   ) async {
-    final userId = supabase.auth.currentUser?.id;
+    final userId = _supabase.auth.currentUser?.id;
 
     if (userId == null) {
       throw Exception('User is not logged in.');
@@ -303,14 +337,15 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
     for (int i = 0; i < images.length; i++) {
       final image = images[i];
 
-      final Uint8List bytes = await image.readAsBytes();
+      final Uint8List bytes =
+          await image.readAsBytes();
 
       String extension = 'jpg';
 
       if (image.name.contains('.')) {
-        extension = image.name.split('.').last.toLowerCase();
+        extension =
+            image.name.split('.').last.toLowerCase();
 
-        // Normalize common formats.
         if (extension == 'jpeg') {
           extension = 'jpg';
         }
@@ -320,7 +355,8 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
           DateTime.now().millisecondsSinceEpoch;
 
       final path =
-          '$userId/pet_$petId/${timestamp}_$i.$extension';
+          '$userId/pet_$petId/'
+          '${timestamp}_$i.$extension';
 
       String contentType = 'image/jpeg';
 
@@ -330,7 +366,7 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
         contentType = 'image/webp';
       }
 
-      await supabase.storage
+      await _supabase.storage
           .from('pet-photos')
           .uploadBinary(
             path,
@@ -368,18 +404,27 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
         ),
         content: Text(
           'This pet profile will be removed.',
-          style: GoogleFonts.dmSans(color: _Palette.brownSoft.withOpacity(0.8)),
+          style: GoogleFonts.dmSans(
+            color: _Palette.brownSoft.withOpacity(0.8),
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel', style: GoogleFonts.dmSans(color: _Palette.muted)),
+            onPressed: () =>
+                Navigator.pop(ctx, false),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.dmSans(
+                color: _Palette.muted,
+              ),
+            ),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Colors.redAccent,
             ),
-            onPressed: () => Navigator.pop(ctx, true),
+            onPressed: () =>
+                Navigator.pop(ctx, true),
             child: const Text('Delete'),
           ),
         ],
@@ -389,43 +434,55 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
     if (confirm != true) return;
 
     try {
-      // Get photo paths before deleting the pet.
-      final pet = await supabase
+      final userId =
+          _supabase.auth.currentUser?.id;
+
+      if (userId == null) {
+        throw Exception('User is not logged in.');
+      }
+
+      // Get photo paths before deleting pet.
+      final pet = await _supabase
           .from('pets')
           .select('photo_paths')
           .eq('id', id)
+          .eq('owner_id', userId)
           .maybeSingle();
 
       // Delete photos from Storage.
       if (pet != null) {
         final photoPaths = pet['photo_paths'];
 
-        if (photoPaths is List && photoPaths.isNotEmpty) {
+        if (photoPaths is List &&
+            photoPaths.isNotEmpty) {
           final paths = photoPaths
               .map((e) => e.toString())
               .toList();
 
           try {
-            await supabase.storage
+            await _supabase.storage
                 .from('pet-photos')
                 .remove(paths);
           } catch (_) {
-            // Do not stop pet deletion if Storage cleanup fails.
+            // Don't stop deletion if storage cleanup fails.
           }
         }
       }
 
       // Delete pet record.
-      await supabase
+      await _supabase
           .from('pets')
           .delete()
-          .eq('id', id);
+          .eq('id', id)
+          .eq('owner_id', userId);
 
       await _fetchPets();
 
       _showMessage('Pet deleted.');
     } catch (e) {
-      _showMessage('Error deleting pet: $e');
+      _showMessage(
+        'Error deleting pet: $e',
+      );
     }
   }
 
@@ -435,10 +492,12 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
 
   void _clearForm() {
     _editingPetId = null;
+
     _nameController.clear();
-    _breedController.clear();
     _ageController.clear();
+
     _petType = 'Dog';
+    _gender = 'Male';
   }
 
   // ============================================================
@@ -447,6 +506,9 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
 
   void _showMessage(String message) {
     if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+        .hideCurrentSnackBar();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -481,7 +543,12 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
             color: _Palette.salmon,
             onRefresh: _fetchPets,
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 150),
+              padding: const EdgeInsets.fromLTRB(
+                18,
+                16,
+                18,
+                150,
+              ),
               children: [
                 // =========================
                 // HEADER
@@ -497,7 +564,10 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
                         gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
-                          colors: [_Palette.salmon, _Palette.peach],
+                          colors: [
+                            _Palette.salmon,
+                            _Palette.peach,
+                          ],
                         ),
                       ),
                       child: const Icon(
@@ -520,20 +590,29 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
 
                 const SizedBox(height: 20),
 
+                // =========================
+                // REGISTER BUTTON
+                // =========================
+
                 SizedBox(
                   width: double.infinity,
                   height: 58,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(22),
+                      borderRadius:
+                          BorderRadius.circular(22),
                       gradient: const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [_Palette.salmon, _Palette.peach],
+                        colors: [
+                          _Palette.salmon,
+                          _Palette.peach,
+                        ],
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: _Palette.salmon.withOpacity(0.35),
+                          color: _Palette.salmon
+                              .withOpacity(0.35),
                           blurRadius: 14,
                           offset: const Offset(0, 6),
                         ),
@@ -541,7 +620,9 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
                     ),
                     child: FilledButton.icon(
                       onPressed: _showRegisterDialog,
-                      icon: const Icon(Icons.pets_rounded),
+                      icon: const Icon(
+                        Icons.pets_rounded,
+                      ),
                       label: Text(
                         'Register a Pet',
                         style: GoogleFonts.dmSans(
@@ -550,12 +631,15 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
                         ),
                       ),
                       style: FilledButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        shadowColor: Colors.transparent,
+                        backgroundColor:
+                            Colors.transparent,
+                        shadowColor:
+                            Colors.transparent,
                         foregroundColor: Colors.white,
                         elevation: 0,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(22),
+                          borderRadius:
+                              BorderRadius.circular(22),
                         ),
                       ),
                     ),
@@ -564,17 +648,25 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
 
                 const SizedBox(height: 22),
 
+                // =========================
+                // PET COUNT
+                // =========================
+
                 Container(
-                  padding: const EdgeInsets.symmetric(
+                  padding:
+                      const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 14,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.9),
-                    borderRadius: BorderRadius.circular(20),
+                    color:
+                        Colors.white.withOpacity(0.9),
+                    borderRadius:
+                        BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                        color: _Palette.brownSoft.withOpacity(0.08),
+                        color: _Palette.brownSoft
+                            .withOpacity(0.08),
                         blurRadius: 10,
                         offset: const Offset(0, 5),
                       ),
@@ -586,8 +678,10 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
                         width: 34,
                         height: 34,
                         decoration: BoxDecoration(
-                          color: _Palette.blush.withOpacity(0.6),
-                          borderRadius: BorderRadius.circular(12),
+                          color: _Palette.blush
+                              .withOpacity(0.6),
+                          borderRadius:
+                              BorderRadius.circular(12),
                         ),
                         child: const Icon(
                           Icons.pets_rounded,
@@ -670,7 +764,8 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
             'Tap "Register a Pet" to add your first pet.',
             textAlign: TextAlign.center,
             style: GoogleFonts.dmSans(
-              color: _Palette.brownSoft.withOpacity(0.7),
+              color: _Palette.brownSoft
+                  .withOpacity(0.7),
               fontSize: 13,
             ),
           ),
@@ -686,20 +781,29 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
   Widget _petCard(Map<String, dynamic> pet) {
     final id = pet['id'] as int;
 
-    final name = pet['pet_name']?.toString() ?? 'Pet';
-    final type = pet['pet_type']?.toString() ?? 'Pet';
-    final breed = pet['breed']?.toString() ?? '';
-    final age = pet['age']?.toString() ?? '0';
+    final name =
+        pet['pet_name']?.toString() ?? 'Pet';
+
+    final type =
+        pet['pet_type']?.toString() ?? 'Pet';
+
+    final age =
+        pet['age']?.toString() ?? '0';
+
+    final gender =
+        pet['gender']?.toString() ?? '';
 
     final photoPaths = pet['photo_paths'];
 
-    final hasPhotos = photoPaths is List && photoPaths.isNotEmpty;
+    final hasPhotos =
+        photoPaths is List &&
+        photoPaths.isNotEmpty;
 
     String? firstPhotoUrl;
 
     if (hasPhotos) {
       try {
-        firstPhotoUrl = supabase.storage
+        firstPhotoUrl = _supabase.storage
             .from('pet-photos')
             .getPublicUrl(
               photoPaths.first.toString(),
@@ -710,11 +814,16 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
     }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin:
+          const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),
       decoration: _cardDecoration(),
       child: Row(
         children: [
+          // =========================
+          // PET IMAGE
+          // =========================
+
           Container(
             width: 64,
             height: 64,
@@ -724,17 +833,21 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  _Palette.salmon.withOpacity(0.85),
-                  _Palette.peach.withOpacity(0.85),
+                  _Palette.salmon
+                      .withOpacity(0.85),
+                  _Palette.peach
+                      .withOpacity(0.85),
                 ],
               ),
-              borderRadius: BorderRadius.circular(18),
+              borderRadius:
+                  BorderRadius.circular(18),
             ),
             child: firstPhotoUrl != null
                 ? Image.network(
                     firstPhotoUrl,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) {
+                    errorBuilder:
+                        (_, __, ___) {
                       return const Icon(
                         Icons.pets_rounded,
                         color: Colors.white,
@@ -751,54 +864,74 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
 
           const SizedBox(width: 14),
 
+          // =========================
+          // PET INFORMATION
+          // =========================
+
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
               children: [
                 Text(
                   name,
                   style: GoogleFonts.fraunces(
                     color: _Palette.brown,
                     fontSize: 16,
-                    fontWeight: FontWeight.w700,
+                    fontWeight:
+                        FontWeight.w700,
                   ),
                 ),
 
                 const SizedBox(height: 4),
 
                 Text(
-                  '$type • $breed • $age yrs',
+                  '$type • $gender • $age yrs',
                   style: GoogleFonts.dmSans(
-                    color: _Palette.brownSoft.withOpacity(0.7),
+                    color: _Palette.brownSoft
+                        .withOpacity(0.7),
                     fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                    fontWeight:
+                        FontWeight.w600,
                   ),
                 ),
 
                 if (hasPhotos) ...[
                   const SizedBox(height: 6),
+
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
+                    padding:
+                        const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration:
+                        BoxDecoration(
                       color: _Palette.cream,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius:
+                          BorderRadius.circular(8),
                     ),
                     child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                      mainAxisSize:
+                          MainAxisSize.min,
                       children: [
                         const Icon(
-                          Icons.photo_library_rounded,
+                          Icons
+                              .photo_library_rounded,
                           size: 13,
-                          color: _Palette.salmon,
+                          color:
+                              _Palette.salmon,
                         ),
                         const SizedBox(width: 4),
                         Text(
                           '${photoPaths.length} photos',
-                          style: GoogleFonts.dmSans(
-                            color: _Palette.brownSoft,
+                          style:
+                              GoogleFonts.dmSans(
+                            color:
+                                _Palette.brownSoft,
                             fontSize: 11,
-                            fontWeight: FontWeight.w700,
+                            fontWeight:
+                                FontWeight.w700,
                           ),
                         ),
                       ],
@@ -809,10 +942,15 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
             ),
           ),
 
+          // =========================
+          // MENU
+          // =========================
+
           PopupMenuButton<String>(
             color: Colors.white,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius:
+                  BorderRadius.circular(16),
             ),
             onSelected: (value) {
               if (value == 'edit') {
@@ -831,10 +969,15 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
                     const Icon(
                       Icons.edit_rounded,
                       size: 18,
-                      color: _Palette.salmon,
+                      color:
+                          _Palette.salmon,
                     ),
                     const SizedBox(width: 8),
-                    Text('Edit', style: GoogleFonts.dmSans()),
+                    Text(
+                      'Edit',
+                      style:
+                          GoogleFonts.dmSans(),
+                    ),
                   ],
                 ),
               ),
@@ -843,12 +986,18 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
                 child: Row(
                   children: [
                     const Icon(
-                      Icons.delete_outline_rounded,
+                      Icons
+                          .delete_outline_rounded,
                       size: 18,
-                      color: Colors.redAccent,
+                      color:
+                          Colors.redAccent,
                     ),
                     const SizedBox(width: 8),
-                    Text('Delete', style: GoogleFonts.dmSans()),
+                    Text(
+                      'Delete',
+                      style:
+                          GoogleFonts.dmSans(),
+                    ),
                   ],
                 ),
               ),
@@ -869,7 +1018,8 @@ class _PetRegistrationPageState extends State<PetRegistrationPage> {
       borderRadius: BorderRadius.circular(24),
       boxShadow: [
         BoxShadow(
-          color: _Palette.brownSoft.withOpacity(0.1),
+          color: _Palette.brownSoft
+              .withOpacity(0.1),
           blurRadius: 16,
           offset: const Offset(0, 6),
         ),
@@ -887,14 +1037,19 @@ class _PetFormDialog extends StatefulWidget {
   final String buttonText;
 
   final TextEditingController nameController;
-  final TextEditingController breedController;
   final TextEditingController ageController;
 
   final String petType;
+  final String gender;
+
   final bool loading;
   final bool requirePhoto;
 
-  final ValueChanged<String> onPetTypeChanged;
+  final ValueChanged<String>
+      onPetTypeChanged;
+
+  final ValueChanged<String>
+      onGenderChanged;
 
   final Future<void> Function(
     List<XFile> selectedImages,
@@ -904,23 +1059,28 @@ class _PetFormDialog extends StatefulWidget {
     required this.title,
     required this.buttonText,
     required this.nameController,
-    required this.breedController,
     required this.ageController,
     required this.petType,
+    required this.gender,
     required this.loading,
     required this.requirePhoto,
     required this.onPetTypeChanged,
+    required this.onGenderChanged,
     required this.onSubmit,
   });
 
   @override
-  State<_PetFormDialog> createState() => _PetFormDialogState();
+  State<_PetFormDialog> createState() =>
+      _PetFormDialogState();
 }
 
-class _PetFormDialogState extends State<_PetFormDialog> {
+class _PetFormDialogState
+    extends State<_PetFormDialog> {
   late String _selectedPetType;
+  late String _selectedGender;
 
-  final ImagePicker _picker = ImagePicker();
+  final ImagePicker _picker =
+      ImagePicker();
 
   List<XFile> _selectedImages = [];
 
@@ -930,7 +1090,11 @@ class _PetFormDialogState extends State<_PetFormDialog> {
   void initState() {
     super.initState();
 
-    _selectedPetType = widget.petType;
+    _selectedPetType =
+        widget.petType;
+
+    _selectedGender =
+        widget.gender;
   }
 
   // ============================================================
@@ -945,7 +1109,8 @@ class _PetFormDialogState extends State<_PetFormDialog> {
     });
 
     try {
-      final images = await _picker.pickMultiImage(
+      final images =
+          await _picker.pickMultiImage(
         imageQuality: 80,
         maxWidth: 1600,
         maxHeight: 1600,
@@ -958,7 +1123,8 @@ class _PetFormDialogState extends State<_PetFormDialog> {
       if (!mounted) return;
 
       setState(() {
-        _selectedImages = images.take(20).toList();
+        _selectedImages =
+            images.take(20).toList();
       });
 
       if (images.length > 20) {
@@ -996,7 +1162,8 @@ class _PetFormDialogState extends State<_PetFormDialog> {
   void _showMessage(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
       SnackBar(
         content: Text(message),
       ),
@@ -1010,48 +1177,67 @@ class _PetFormDialogState extends State<_PetFormDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: const Color(0xFFFFFDF9),
+      backgroundColor:
+          const Color(0xFFFFFDF9),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(28),
+        borderRadius:
+            BorderRadius.circular(28),
       ),
       title: Row(
         children: [
           Container(
             width: 30,
             height: 30,
-            decoration: const BoxDecoration(
+            decoration:
+                const BoxDecoration(
               shape: BoxShape.circle,
               gradient: LinearGradient(
-                colors: [_Palette.salmon, _Palette.peach],
+                colors: [
+                  _Palette.salmon,
+                  _Palette.peach,
+                ],
               ),
             ),
-            child: const Icon(Icons.pets, color: Colors.white, size: 15),
+            child: const Icon(
+              Icons.pets,
+              color: Colors.white,
+              size: 15,
+            ),
           ),
           const SizedBox(width: 10),
-          Text(
-            widget.title,
-            style: GoogleFonts.fraunces(
-              color: _Palette.brownSoft,
-              fontWeight: FontWeight.w700,
-              fontSize: 18,
+          Expanded(
+            child: Text(
+              widget.title,
+              style:
+                  GoogleFonts.fraunces(
+                color:
+                    _Palette.brownSoft,
+                fontWeight:
+                    FontWeight.w700,
+                fontSize: 18,
+              ),
             ),
           ),
         ],
       ),
+
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize:
+                MainAxisSize.min,
             children: [
               // ==================================================
               // PET NAME
               // ==================================================
 
               _input(
-                controller: widget.nameController,
+                controller:
+                    widget.nameController,
                 label: 'Pet Name',
-                icon: Icons.badge_rounded,
+                icon:
+                    Icons.badge_rounded,
               ),
 
               const SizedBox(height: 14),
@@ -1060,59 +1246,64 @@ class _PetFormDialogState extends State<_PetFormDialog> {
               // PET TYPE
               // ==================================================
 
-              DropdownButtonFormField<String>(
-                value: _selectedPetType,
-                style: GoogleFonts.dmSans(
-                  color: _Palette.brown,
+              DropdownButtonFormField<
+                  String>(
+                value:
+                    _selectedPetType,
+                style:
+                    GoogleFonts.dmSans(
+                  color:
+                      _Palette.brown,
                   fontSize: 15,
                 ),
-                decoration: _inputDecoration(
+                decoration:
+                    _inputDecoration(
                   label: 'Pet Type',
-                  icon: Icons.pets_rounded,
+                  icon:
+                      Icons.pets_rounded,
                 ),
                 items: const [
                   DropdownMenuItem(
                     value: 'Dog',
-                    child: Text('🐶 Dog'),
+                    child:
+                        Text('🐶 Dog'),
                   ),
                   DropdownMenuItem(
                     value: 'Cat',
-                    child: Text('🐱 Cat'),
+                    child:
+                        Text('🐱 Cat'),
                   ),
                   DropdownMenuItem(
                     value: 'Bird',
-                    child: Text('🐦 Bird'),
+                    child:
+                        Text('🐦 Bird'),
                   ),
                   DropdownMenuItem(
                     value: 'Rabbit',
-                    child: Text('🐰 Rabbit'),
+                    child:
+                        Text('🐰 Rabbit'),
                   ),
                   DropdownMenuItem(
                     value: 'Other',
-                    child: Text('🐾 Other'),
+                    child:
+                        Text('🐾 Other'),
                   ),
                 ],
                 onChanged: (value) {
-                  if (value == null) return;
+                  if (value == null) {
+                    return;
+                  }
 
                   setState(() {
-                    _selectedPetType = value;
+                    _selectedPetType =
+                        value;
                   });
 
-                  widget.onPetTypeChanged(value);
+                  widget
+                      .onPetTypeChanged(
+                    value,
+                  );
                 },
-              ),
-
-              const SizedBox(height: 14),
-
-              // ==================================================
-              // BREED
-              // ==================================================
-
-              _input(
-                controller: widget.breedController,
-                label: 'Breed',
-                icon: Icons.category_rounded,
               ),
 
               const SizedBox(height: 14),
@@ -1122,10 +1313,66 @@ class _PetFormDialogState extends State<_PetFormDialog> {
               // ==================================================
 
               _input(
-                controller: widget.ageController,
+                controller:
+                    widget.ageController,
                 label: 'Age',
-                icon: Icons.cake_rounded,
-                keyboardType: TextInputType.number,
+                icon:
+                    Icons.cake_rounded,
+                keyboardType:
+                    TextInputType.number,
+              ),
+
+              const SizedBox(height: 14),
+
+              // ==================================================
+              // GENDER
+              // ==================================================
+
+              DropdownButtonFormField<
+                  String>(
+                value:
+                    _selectedGender,
+                style:
+                    GoogleFonts.dmSans(
+                  color:
+                      _Palette.brown,
+                  fontSize: 15,
+                ),
+                decoration:
+                    _inputDecoration(
+                  label: 'Gender',
+                  icon:
+                      Icons.pets_rounded,
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'Male',
+                    child: Text(
+                      '♂ Male',
+                    ),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Female',
+                    child: Text(
+                      '♀ Female',
+                    ),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+
+                  setState(() {
+                    _selectedGender =
+                        value;
+                  });
+
+                  widget
+                      .onGenderChanged(
+                    value,
+                  );
+                },
               ),
 
               const SizedBox(height: 20),
@@ -1135,21 +1382,29 @@ class _PetFormDialogState extends State<_PetFormDialog> {
               // ==================================================
 
               Align(
-                alignment: Alignment.centerLeft,
+                alignment:
+                    Alignment.centerLeft,
                 child: Row(
                   children: [
                     const Icon(
-                      Icons.photo_library_rounded,
-                      color: _Palette.salmon,
+                      Icons
+                          .photo_library_rounded,
+                      color:
+                          _Palette.salmon,
                       size: 20,
                     ),
-                    const SizedBox(width: 7),
+                    const SizedBox(
+                      width: 7,
+                    ),
                     Text(
                       'Pet Photos',
-                      style: GoogleFonts.dmSans(
-                        color: _Palette.brown,
+                      style:
+                          GoogleFonts.dmSans(
+                        color:
+                            _Palette.brown,
                         fontSize: 15,
-                        fontWeight: FontWeight.w800,
+                        fontWeight:
+                            FontWeight.w800,
                       ),
                     ),
                   ],
@@ -1159,11 +1414,14 @@ class _PetFormDialogState extends State<_PetFormDialog> {
               const SizedBox(height: 7),
 
               Align(
-                alignment: Alignment.centerLeft,
+                alignment:
+                    Alignment.centerLeft,
                 child: Text(
-                  'Add clear photos of the same pet from different angles.',
-                  style: GoogleFonts.dmSans(
-                    color: _Palette.muted,
+                  'Add clear photos of the same pet from different angles for better AI recognition.',
+                  style:
+                      GoogleFonts.dmSans(
+                    color:
+                        _Palette.muted,
                     fontSize: 12,
                   ),
                 ),
@@ -1176,21 +1434,37 @@ class _PetFormDialogState extends State<_PetFormDialog> {
               // ==================================================
 
               InkWell(
-                onTap: widget.loading || _selectingPhotos
+                onTap: widget.loading ||
+                        _selectingPhotos
                     ? null
                     : _selectPhotos,
-                borderRadius: BorderRadius.circular(18),
+                borderRadius:
+                    BorderRadius.circular(
+                        18),
                 child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
+                  width:
+                      double.infinity,
+                  padding:
+                      const EdgeInsets
+                          .symmetric(
                     vertical: 18,
                     horizontal: 14,
                   ),
-                  decoration: BoxDecoration(
-                    color: _Palette.blush.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: _Palette.salmon.withOpacity(0.35),
+                  decoration:
+                      BoxDecoration(
+                    color: _Palette
+                        .blush
+                        .withOpacity(
+                            0.3),
+                    borderRadius:
+                        BorderRadius
+                            .circular(18),
+                    border:
+                        Border.all(
+                      color: _Palette
+                          .salmon
+                          .withOpacity(
+                              0.35),
                     ),
                   ),
                   child: Column(
@@ -1199,38 +1473,59 @@ class _PetFormDialogState extends State<_PetFormDialog> {
                         const SizedBox(
                           width: 28,
                           height: 28,
-                          child: CircularProgressIndicator(
-                            color: _Palette.salmon,
-                            strokeWidth: 2.5,
+                          child:
+                              CircularProgressIndicator(
+                            color:
+                                _Palette
+                                    .salmon,
+                            strokeWidth:
+                                2.5,
                           ),
                         )
                       else
                         const Icon(
-                          Icons.add_a_photo_rounded,
-                          color: _Palette.salmon,
+                          Icons
+                              .add_a_photo_rounded,
+                          color:
+                              _Palette
+                                  .salmon,
                           size: 34,
                         ),
 
-                      const SizedBox(height: 8),
+                      const SizedBox(
+                          height: 8),
 
                       Text(
-                        _selectedImages.isEmpty
+                        _selectedImages
+                                .isEmpty
                             ? 'Add Photos'
                             : 'Change Photos',
-                        style: GoogleFonts.dmSans(
-                          color: _Palette.brown,
-                          fontWeight: FontWeight.w700,
+                        style:
+                            GoogleFonts
+                                .dmSans(
+                          color:
+                              _Palette
+                                  .brown,
+                          fontWeight:
+                              FontWeight
+                                  .w700,
                         ),
                       ),
 
-                      const SizedBox(height: 3),
+                      const SizedBox(
+                          height: 3),
 
                       Text(
-                        _selectedImages.isEmpty
+                        _selectedImages
+                                .isEmpty
                             ? 'Select up to 20 photos'
                             : '${_selectedImages.length} photos selected',
-                        style: GoogleFonts.dmSans(
-                          color: _Palette.muted,
+                        style:
+                            GoogleFonts
+                                .dmSans(
+                          color:
+                              _Palette
+                                  .muted,
                           fontSize: 12,
                         ),
                       ),
@@ -1243,64 +1538,110 @@ class _PetFormDialogState extends State<_PetFormDialog> {
               // PHOTO PREVIEW
               // ==================================================
 
-              if (_selectedImages.isNotEmpty) ...[
-                const SizedBox(height: 14),
+              if (_selectedImages
+                  .isNotEmpty) ...[
+                const SizedBox(
+                    height: 14),
 
                 SizedBox(
                   height: 100,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _selectedImages.length,
-                    itemBuilder: (context, index) {
-                      return FutureBuilder<Uint8List>(
-                        future: _selectedImages[index].readAsBytes(),
-                        builder: (context, snapshot) {
+                  child:
+                      ListView.builder(
+                    scrollDirection:
+                        Axis.horizontal,
+                    itemCount:
+                        _selectedImages
+                            .length,
+                    itemBuilder:
+                        (context,
+                            index) {
+                      return FutureBuilder<
+                          Uint8List>(
+                        future:
+                            _selectedImages[
+                                    index]
+                                .readAsBytes(),
+                        builder:
+                            (context,
+                                snapshot) {
                           return Container(
                             width: 90,
                             height: 90,
-                            margin: const EdgeInsets.only(right: 10),
+                            margin:
+                                const EdgeInsets
+                                    .only(
+                              right: 10,
+                            ),
                             child: Stack(
                               children: [
                                 ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: snapshot.hasData
+                                  borderRadius:
+                                      BorderRadius
+                                          .circular(
+                                              16),
+                                  child: snapshot
+                                          .hasData
                                       ? Image.memory(
-                                          snapshot.data!,
-                                          width: 90,
-                                          height: 90,
-                                          fit: BoxFit.cover,
+                                          snapshot
+                                              .data!,
+                                          width:
+                                              90,
+                                          height:
+                                              90,
+                                          fit: BoxFit
+                                              .cover,
                                         )
                                       : Container(
-                                          width: 90,
-                                          height: 90,
-                                          color:
-                                              _Palette.blush.withOpacity(0.4),
-                                          child: const Center(
-                                            child: CircularProgressIndicator(
-                                              color: _Palette.salmon,
-                                              strokeWidth: 2,
+                                          width:
+                                              90,
+                                          height:
+                                              90,
+                                          color: _Palette
+                                              .blush
+                                              .withOpacity(
+                                                  0.4),
+                                          child:
+                                              const Center(
+                                            child:
+                                                CircularProgressIndicator(
+                                              color:
+                                                  _Palette.salmon,
+                                              strokeWidth:
+                                                  2,
                                             ),
                                           ),
                                         ),
                                 ),
 
-                                // Remove button
                                 Positioned(
                                   top: 4,
                                   right: 4,
-                                  child: GestureDetector(
-                                    onTap: () => _removePhoto(index),
-                                    child: Container(
-                                      width: 25,
-                                      height: 25,
-                                      decoration: const BoxDecoration(
-                                        color: Colors.redAccent,
-                                        shape: BoxShape.circle,
+                                  child:
+                                      GestureDetector(
+                                    onTap: () =>
+                                        _removePhoto(
+                                            index),
+                                    child:
+                                        Container(
+                                      width:
+                                          25,
+                                      height:
+                                          25,
+                                      decoration:
+                                          const BoxDecoration(
+                                        color:
+                                            Colors.redAccent,
+                                        shape:
+                                            BoxShape.circle,
                                       ),
-                                      child: const Icon(
-                                        Icons.close,
-                                        color: Colors.white,
-                                        size: 16,
+                                      child:
+                                          const Icon(
+                                        Icons
+                                            .close,
+                                        color:
+                                            Colors.white,
+                                        size:
+                                            16,
                                       ),
                                     ),
                                   ),
@@ -1315,16 +1656,21 @@ class _PetFormDialogState extends State<_PetFormDialog> {
                 ),
               ],
 
-              if (widget.requirePhoto && _selectedImages.isEmpty) ...[
+              if (widget.requirePhoto &&
+                  _selectedImages.isEmpty) ...[
                 const SizedBox(height: 8),
                 Align(
-                  alignment: Alignment.centerLeft,
+                  alignment:
+                      Alignment.centerLeft,
                   child: Text(
                     '* At least one pet photo is required.',
-                    style: GoogleFonts.dmSans(
-                      color: Colors.redAccent,
+                    style:
+                        GoogleFonts.dmSans(
+                      color:
+                          Colors.redAccent,
                       fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                      fontWeight:
+                          FontWeight.w600,
                     ),
                   ),
                 ),
@@ -1338,55 +1684,95 @@ class _PetFormDialogState extends State<_PetFormDialog> {
       // ACTION BUTTONS
       // ========================================================
 
-      actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+      actionsPadding:
+          const EdgeInsets.fromLTRB(
+        18,
+        0,
+        18,
+        18,
+      ),
 
       actions: [
         TextButton(
-          onPressed: widget.loading ? null : () => Navigator.pop(context),
+          onPressed: widget.loading
+              ? null
+              : () =>
+                  Navigator.pop(context),
           child: Text(
             'Cancel',
-            style: GoogleFonts.dmSans(color: _Palette.muted, fontWeight: FontWeight.w600),
+            style:
+                GoogleFonts.dmSans(
+              color:
+                  _Palette.muted,
+              fontWeight:
+                  FontWeight.w600,
+            ),
           ),
         ),
 
         DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            gradient: const LinearGradient(
-              colors: [_Palette.salmon, _Palette.peach],
+          decoration:
+              BoxDecoration(
+            borderRadius:
+                BorderRadius.circular(
+                    14),
+            gradient:
+                const LinearGradient(
+              colors: [
+                _Palette.salmon,
+                _Palette.peach,
+              ],
             ),
           ),
-          child: FilledButton.icon(
-            onPressed: widget.loading || _selectingPhotos
-                ? null
-                : () async {
-                    await widget.onSubmit(
-                      _selectedImages,
-                    );
-                  },
+          child:
+              FilledButton.icon(
+            onPressed:
+                widget.loading ||
+                        _selectingPhotos
+                    ? null
+                    : () async {
+                        await widget
+                            .onSubmit(
+                          _selectedImages,
+                        );
+                      },
             icon: widget.loading
                 ? const SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
+                    child:
+                        CircularProgressIndicator(
+                      color:
+                          Colors.white,
                       strokeWidth: 2,
                     ),
                   )
                 : const Icon(
-                    Icons.pets_rounded,
+                    Icons
+                        .pets_rounded,
                   ),
             label: Text(
               widget.buttonText,
-              style: GoogleFonts.dmSans(fontWeight: FontWeight.w700),
+              style:
+                  GoogleFonts.dmSans(
+                fontWeight:
+                    FontWeight.w700,
+              ),
             ),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.transparent,
-              shadowColor: Colors.transparent,
-              foregroundColor: Colors.white,
+            style:
+                FilledButton.styleFrom(
+              backgroundColor:
+                  Colors.transparent,
+              shadowColor:
+                  Colors.transparent,
+              foregroundColor:
+                  Colors.white,
               elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+              shape:
+                  RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.circular(
+                        14),
               ),
             ),
           ),
@@ -1400,16 +1786,22 @@ class _PetFormDialogState extends State<_PetFormDialog> {
   // ============================================================
 
   Widget _input({
-    required TextEditingController controller,
+    required TextEditingController
+        controller,
     required String label,
     required IconData icon,
-    TextInputType keyboardType = TextInputType.text,
+    TextInputType keyboardType =
+        TextInputType.text,
   }) {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
-      style: GoogleFonts.dmSans(color: _Palette.brown, fontSize: 15),
-      decoration: _inputDecoration(
+      style: GoogleFonts.dmSans(
+        color: _Palette.brown,
+        fontSize: 15,
+      ),
+      decoration:
+          _inputDecoration(
         label: label,
         icon: icon,
       ),
@@ -1426,24 +1818,33 @@ class _PetFormDialogState extends State<_PetFormDialog> {
   }) {
     return InputDecoration(
       labelText: label,
-      labelStyle: GoogleFonts.dmSans(color: _Palette.muted),
+      labelStyle:
+          GoogleFonts.dmSans(
+        color: _Palette.muted,
+      ),
       prefixIcon: Icon(
         icon,
         color: _Palette.salmon,
       ),
       filled: true,
       fillColor: Colors.white,
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(
+      focusedBorder:
+          OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(18),
+        borderSide:
+            const BorderSide(
           color: _Palette.salmon,
           width: 1.5,
         ),
       ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
+      enabledBorder:
+          OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(18),
         borderSide: BorderSide(
-          color: _Palette.salmon.withOpacity(0.18),
+          color: _Palette.salmon
+              .withOpacity(0.18),
         ),
       ),
     );

@@ -42,6 +42,7 @@ class _SplashPageState extends State<SplashPage>
       gradientStart: Color(0xFFF6FFF8),
       gradientEnd: Color(0xFFCFF2DA),
     ),
+    
     _SplashData(
       title: 'Ask\nPetBot',
       subtitle: 'Get quick pet care tips for nutrition, habits, and wellness.',
@@ -53,36 +54,44 @@ class _SplashPageState extends State<SplashPage>
       gradientEnd: Color(0xFFCFE4FF),
     
     ),
+    
   ];
 
+
+///
+///
+///
   @override
-  void initState() {
-    super.initState();
+void initState() {
+  super.initState();
 
-    _fadeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    );
+  _fadeController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 700),
+  );
 
-    _fadeAnim = CurvedAnimation(
-      parent: _fadeController,
-      curve: Curves.easeOut,
-    );
+  _fadeAnim = CurvedAnimation(
+    parent: _fadeController,
+    curve: Curves.easeOut,
+  );
 
-    _floatController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    )..repeat(reverse: true);
+  _floatController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  )..repeat(reverse: true);
 
-    _floatAnim = Tween<double>(begin: -8, end: 8).animate(
-      CurvedAnimation(
-        parent: _floatController,
-        curve: Curves.easeInOut,
-      ),
-    );
+  _floatAnim = Tween<double>(begin: -8, end: 8).animate(
+    CurvedAnimation(
+      parent: _floatController,
+      curve: Curves.easeInOut,
+    ),
+  );
 
-    _fadeController.forward();
-  }
+  _fadeController.forward();
+
+  // Check if the user is already logged in.
+  _checkExistingSession();
+}
 
   @override
   void dispose() {
@@ -122,6 +131,33 @@ class _SplashPageState extends State<SplashPage>
       _proceed();
     }
   }
+
+Future<void> _checkExistingSession() async {
+  // Give Flutter a moment to initialize the Supabase session.
+  await Future.delayed(const Duration(milliseconds: 300));
+
+  if (!mounted) return;
+
+  final session = supabase.auth.currentSession;
+
+  // User is already logged in.
+  if (session != null) {
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const HomePage(),
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(
+            opacity: animation,
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 550),
+      ),
+    );
+  }
+}
+
+
 
   void _skip() {
     _proceed();
