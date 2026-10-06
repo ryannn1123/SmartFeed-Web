@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AIRecommendation {
   final String morningTime;
@@ -22,25 +23,28 @@ class AIRecommendation {
     required this.behaviorAdjustment,
   });
 
-  factory AIRecommendation.fromJson(
-    Map<String, dynamic> json,
-  ) {
+  factory AIRecommendation.fromJson(Map<String, dynamic> json) {
     return AIRecommendation(
-      morningTime:
-          json['morning_time'].toString(),
-      eveningTime:
-          json['evening_time'].toString(),
-      morningPortion:
-          json['morning_portion'].toString().toLowerCase(),
-      eveningPortion:
-          json['evening_portion'].toString().toLowerCase(),
-      reason:
-          json['reason'].toString(),
-      foodEfficiency:
-          json['food_efficiency'].toString(),
-      behaviorAdjustment:
-          json['behavior_adjustment'].toString(),
+      morningTime: json['morning_time'].toString(),
+      eveningTime: json['evening_time'].toString(),
+      morningPortion: json['morning_portion'].toString().toLowerCase(),
+      eveningPortion: json['evening_portion'].toString().toLowerCase(),
+      reason: json['reason'].toString(),
+      foodEfficiency: json['food_efficiency'].toString(),
+      behaviorAdjustment: json['behavior_adjustment'].toString(),
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'morning_time': morningTime,
+      'evening_time': eveningTime,
+      'morning_portion': morningPortion,
+      'evening_portion': eveningPortion,
+      'reason': reason,
+      'food_efficiency': foodEfficiency,
+      'behavior_adjustment': behaviorAdjustment,
+    };
   }
 }
 
@@ -48,8 +52,92 @@ class AIRecommendationService {
   static const String _url =
       'https://api.groq.com/openai/v1/chat/completions';
 
-  static const String _model =
-      'openai/gpt-oss-20b';
+  static const String _model = 'openai/gpt-oss-20b';
+
+  static final SupabaseClient _supabase =
+      Supabase.instance.client;
+
+  // ============================================================
+  // LOAD SAVED RECOMMENDATION
+  // ============================================================
+
+  static Future<AIRecommendation?> getSavedRecommendation() async {
+    final user = _supabase.auth.currentUser;
+
+    if (user == null) {
+      throw Exception('User is not logged in.');
+    }
+
+    final response = await _supabase
+        .from('ai_recommendations')
+        .select(
+          '''
+          id,
+          user_id,
+          morning_time,
+          evening_time,
+          morning_portion,
+          evening_portion,
+          reason,
+          food_efficiency,
+          behavior_adjustment,
+          created_at
+          ''',
+        )
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+    if (response == null) {
+      return null;
+    }
+
+    return AIRecommendation.fromJson({
+      'morning_time': response['morning_time'],
+      'evening_time': response['evening_time'],
+      'morning_portion': response['morning_portion'],
+      'evening_portion': response['evening_portion'],
+      'reason': response['reason'],
+      'food_efficiency': response['food_efficiency'],
+      'behavior_adjustment': response['behavior_adjustment'],
+    });
+  }
+
+  // ============================================================
+  // SAVE / REPLACE RECOMMENDATION
+  // ============================================================
+
+  static Future<void> saveRecommendation(
+    AIRecommendation recommendation,
+  ) async {
+    final user = _supabase.auth.currentUser;
+
+    if (user == null) {
+      throw Exception('User is not logged in.');
+    }
+
+    await _supabase.from('ai_recommendations').upsert(
+      {
+        'user_id': user.id,
+        'morning_time': _normalizeTime(
+          recommendation.morningTime,
+        ),
+        'evening_time': _normalizeTime(
+          recommendation.eveningTime,
+        ),
+        'morning_portion': recommendation.morningPortion,
+        'evening_portion': recommendation.eveningPortion,
+        'reason': recommendation.reason,
+        'food_efficiency': recommendation.foodEfficiency,
+        'behavior_adjustment':
+            recommendation.behaviorAdjustment,
+      },
+      onConflict: 'user_id',
+    );
+  }
+
+  // ============================================================
+  // GENERATE NEW AI RECOMMENDATION
+  // ============================================================
 
   static Future<AIRecommendation> generateRecommendation({
     required List<Map<String, dynamic>> feedingLogs,
@@ -94,7 +182,7 @@ Small = 45 degrees
 Medium = 90 degrees
 Full = 180 degrees
 
-IMPORTANT:
+IMPORTANT RULES:
 
 - Only use information from the supplied data.
 - Do not invent feeding history.
@@ -104,8 +192,8 @@ IMPORTANT:
 - Do not make drastic schedule changes without evidence.
 - Prefer the existing feeding pattern when it is consistent.
 - Morning and evening times must use HH:MM 24-hour format.
-- Portions must be small, medium, or full.
-- Keep explanations short.
+- Portions must be exactly small, medium, or full.
+- Keep explanations short and practical.
 ''';
 
     final response = await http.post(
@@ -116,14 +204,12 @@ IMPORTANT:
       },
       body: jsonEncode({
         'model': _model,
-
         'messages': [
           {
             'role': 'user',
             'content': prompt,
           },
         ],
-
         'response_format': {
           'type': 'json_schema',
           'json_schema': {
@@ -131,7 +217,6 @@ IMPORTANT:
             'strict': true,
             'schema': {
               'type': 'object',
-
               'properties': {
                 'morning_time': {
                   'type': 'string',
@@ -165,7 +250,6 @@ IMPORTANT:
                   'type': 'string',
                 },
               },
-
               'required': [
                 'morning_time',
                 'evening_time',
@@ -175,24 +259,20 @@ IMPORTANT:
                 'food_efficiency',
                 'behavior_adjustment',
               ],
-
               'additionalProperties': false,
             },
           },
         },
-
         'temperature': 0.2,
         'max_tokens': 500,
-
-        // Prevent GPT-OSS from spending the response
-        // on unnecessary reasoning instead of the JSON.
         'reasoning_effort': 'low',
       }),
     );
 
     if (response.statusCode != 200) {
       throw Exception(
-        'Groq API error ${response.statusCode}: ${response.body}',
+        'Groq API error ${response.statusCode}: '
+        '${response.body}',
       );
     }
 
@@ -209,8 +289,7 @@ IMPORTANT:
         );
       }
 
-      final json =
-          jsonDecode(content.toString());
+      final json = jsonDecode(content.toString());
 
       return AIRecommendation.fromJson(
         Map<String, dynamic>.from(json),
@@ -220,5 +299,36 @@ IMPORTANT:
         'Failed to read AI recommendation:\n$e',
       );
     }
+  }
+
+  // ============================================================
+  // TIME NORMALIZATION
+  // ============================================================
+
+  static String _normalizeTime(String time) {
+    final parts = time.split(':');
+
+    if (parts.length < 2) {
+      throw Exception(
+        'Invalid AI feeding time: $time',
+      );
+    }
+
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+
+    if (hour == null ||
+        minute == null ||
+        hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59) {
+      throw Exception(
+        'Invalid AI feeding time: $time',
+      );
+    }
+
+    return '${hour.toString().padLeft(2, '0')}:'
+        '${minute.toString().padLeft(2, '0')}:00';
   }
 }

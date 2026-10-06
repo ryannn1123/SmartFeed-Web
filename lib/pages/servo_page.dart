@@ -1,53 +1,111 @@
+// This file-level directive tells Dart to ignore warnings about unused
+// private elements/functions in this file.
 // ignore_for_file: unused_element
 
+// Provides asynchronous programming features such as Future, Timer, etc.
 import 'dart:async';
+
+// Provides JSON encoding and decoding functionality.
 import 'dart:convert';
 
+// Provides Flutter's Material Design widgets and UI framework.
 import 'package:flutter/material.dart';
+
+// Provides custom fonts used throughout the page.
 import 'package:google_fonts/google_fonts.dart';
+
+// Provides HTTP networking functionality for communicating with
+// the Python/Flask pet detection server.
 import 'package:http/http.dart' as http;
+
+// Provides the MJPEG video widget used to display the live camera stream.
 import 'package:mjpeg_view/mjpeg_view.dart';
 
+// Imports the main.dart file so this page can access the global
+// Supabase client named "supabase".
 import '../main.dart';
+
+
+// ============================================================
+// SERVO PAGE
+// ============================================================
+// This is the main page for controlling the SmartFeed feeder.
+//
+// It provides:
+// 1. Live camera viewing
+// 2. Pet detection information
+// 3. Feeding portion selection
+// 4. Manual feeding
+// 5. Feeder door OPEN/CLOSE controls
+// 6. Feeding/detection status
+// ============================================================
 
 class ServoPage extends StatefulWidget {
   const ServoPage({super.key});
 
   @override
   State<ServoPage> createState() => _ServoPageState();
-  
 }
+
+
+// ============================================================
+// SERVO PAGE STATE
+// ============================================================
+
 class _ServoPageState extends State<ServoPage>
     with TickerProviderStateMixin {
+
   // =========================
   // FEEDING
   // =========================
 
+  // Message displayed in the status card.
   String _status = 'Select portion & tap Feed Now';
+
+  // True while the feeder is dispensing food.
   bool _isFeeding = false;
 
-  // Selected servo angle
-// Selected feeding portion
-String _selectedPortion = 'medium';
+  // Currently selected portion: "small", "medium" or "full".
+  String _selectedPortion = 'medium';
 
-// =========================
-  // GATE SERVO
+
+  // =========================
+  // FEEDER DOOR (SERVO 2)
   // =========================
 
+  // True while the feeder door is being opened.
   bool _isGateOpening = false;
+
+  // True while the feeder door is being closed.
   bool _isGateClosing = false;
 
-/////////////////
-//String _foodLvel = 'unknown';
+  // NEW: Current door state read from Supabase (feeder_door.command).
+  //
+  //   true  -> door is OPEN   (OPEN button disabled)
+  //   false -> door is CLOSED (CLOSE button disabled)
+  //   null  -> state not loaded yet (both buttons stay enabled)
+  //
+  // Because this comes from the database, it also updates when the
+  // Python pet-detection script opens the door automatically.
+  bool? _isDoorOpen;
+
+  // NEW: Realtime subscription that listens for door changes.
+  StreamSubscription<List<Map<String, dynamic>>>? _doorSub;
+
+
   // =========================
   // PET DETECTION
   // =========================
 
+  // Name/status returned by the pet detection server.
   String _petDetection = 'No Pet Detected';
+
+  // Confidence score from the pet detection server (0.0 - 1.0).
   double _petConfidence = 0.0;
 
-
+  // Timer used to repeatedly request pet detection results.
   Timer? _detectionTimer;
+
 
   // =========================
   // ANIMATION
@@ -55,12 +113,12 @@ String _selectedPortion = 'medium';
 
   late AnimationController _pawController;
   late Animation<double> _pawAnimation;
-
-  // Purely decorative pulse for the "live" indicators — UI only.
   late AnimationController _pulseController;
+  late AnimationController _shimmerController;
+
 
   // =========================
-  // PALETTE (matches SmartFeed's established pet-warm theme)
+  // PALETTE
   // =========================
 
   static const Color _salmon = Color(0xFFFA7268);
@@ -71,11 +129,12 @@ String _selectedPortion = 'medium';
   static const Color _brownSoft = Color(0xFF7A3E2A);
   static const Color _leafGreen = Color(0xFF6FAE7C);
   static const Color _amber = Color(0xFFE0A438);
+  static const Color _mint = Color(0xFFB8E0D2);
+
 
   // =========================
   // INIT
   // =========================
-
   @override
   void initState() {
     super.initState();
@@ -85,14 +144,8 @@ String _selectedPortion = 'medium';
       vsync: this,
     );
 
-    _pawAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(
-      CurvedAnimation(
-        parent: _pawController,
-        curve: Curves.easeOutBack,
-      ),
+    _pawAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _pawController, curve: Curves.easeOutBack),
     );
 
     _pulseController = AnimationController(
@@ -100,28 +153,72 @@ String _selectedPortion = 'medium';
       vsync: this,
     )..repeat(reverse: true);
 
-    // Start checking YOLO detection
+    _shimmerController = AnimationController(
+      duration: const Duration(milliseconds: 2400),
+      vsync: this,
+    )..repeat();
+
+    // Starts repeatedly checking the pet detection server.
     _startDetectionPolling();
+
+    // NEW: Starts listening to the feeder door state in Supabase.
+    _listenDoorState();
   }
 
+
+  // =========================
+  // NEW: DOOR STATE LISTENER
+  // =========================
+  // Subscribes to the feeder_door row (id = 1) using Supabase Realtime.
   //
- 
+  // Whenever the "command" column changes (from this app, from the
+  // Python script, or from anywhere else), the UI updates and the
+  // correct button is enabled/disabled.
+  //
+  // NOTE: Realtime must be enabled for the "feeder_door" table in the
+  // Supabase dashboard, otherwise only the initial value is received.
+  void _listenDoorState() {
+    _doorSub = supabase
+        .from('feeder_door')
+        .stream(primaryKey: ['id'])
+        .eq('id', 1)
+        .listen(
+      (rows) {
+        if (rows.isEmpty || !mounted) return;
+
+        // Reads the command and normalizes it so "OPEN", "Open"
+        // and "open" are all treated the same.
+        final cmd = rows.first['command']?.toString().toLowerCase().trim();
+
+        // Only "open" and "close" change the door state.
+        // Any other value (e.g. "idle") keeps the last known state.
+        if (cmd == 'open') {
+          setState(() => _isDoorOpen = true);
+        } else if (cmd == 'close') {
+          setState(() => _isDoorOpen = false);
+        }
+      },
+      onError: (_) {
+        // Ignore stream errors so the page does not crash if the
+        // connection drops. The stream reconnects automatically.
+      },
+    );
+  }
+
+
   // =========================
   // PET DETECTION POLLING
   // =========================
-
+  // Asks the Python/Flask server for the latest detection result
+  // once every second.
   void _startDetectionPolling() {
     _detectionTimer = Timer.periodic(
       const Duration(seconds: 1),
       (_) async {
         try {
-          final response = await http.get(
-            Uri.parse(
-              '192.168.1.9:5000/detection',
-            ),
-          ).timeout(
-            const Duration(seconds: 3),
-          );
+          final response = await http
+              .get(Uri.parse('http://192.168.1.13:5000/detection'))
+              .timeout(const Duration(seconds: 3));
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
@@ -129,250 +226,216 @@ String _selectedPortion = 'medium';
             if (!mounted) return;
 
             setState(() {
-              _petDetection =
-                  data['pet'] ?? 'No Pet Detected';
-
-              _petConfidence =
-                  (data['confidence'] ?? 0.0).toDouble();
+              _petDetection = data['pet'] ?? 'No Pet Detected';
+              _petConfidence = (data['confidence'] ?? 0.0).toDouble();
             });
           }
         } catch (e) {
+          // Detection server may be offline - ignore on purpose so the
+          // page does not crash.
         }
       },
     );
   }
 
+
   // =========================
   // PORTION INFORMATION
   // =========================
-
   String _getPortionLabel(String portion) {
-  switch (portion) {
-    case 'small':
-      return 'Small';
-    case 'medium':
-      return 'Medium';
-    case 'full':
-      return 'Full';
-    default:
-      return 'Unknown';
+    switch (portion) {
+      case 'small':
+        return 'Small';
+      case 'medium':
+        return 'Medium';
+      case 'full':
+        return 'Full';
+      default:
+        return 'Unknown';
+    }
   }
-}
 
-Duration _getFeedingDuration(String portion) {
-  switch (portion) {
-    case 'small':
-      return const Duration(milliseconds: 500);
-
-    case 'medium':
-      return const Duration(seconds: 1);
-
-    case 'full':
-      return const Duration(seconds: 2);
-
-    default:
-      return const Duration(seconds: 1);
+  Duration _getFeedingDuration(String portion) {
+    switch (portion) {
+      case 'small':
+        return const Duration(milliseconds: 500);
+      case 'medium':
+        return const Duration(seconds: 1);
+      case 'full':
+        return const Duration(seconds: 2);
+      default:
+        return const Duration(seconds: 1);
+    }
   }
-}
+
 
   // =========================
   // FEED NOW
   // =========================
-
   Future<void> feedNow() async {
-  if (_isFeeding) return;
+    // Prevents another feeding while one is already running.
+    if (_isFeeding) return;
 
-  final String portion = _selectedPortion;
-  final String portionLabel = _getPortionLabel(portion);
-
-  setState(() {
-    _isFeeding = true;
-    _status = "🍖 Dispensing ($portionLabel)...";
-  });
-
-  try {
-    // =================================================
-    // 1. SEND PORTION COMMAND TO ESP32 THROUGH SUPABASE
-    // =================================================
-    //
-    // IMPORTANT:
-    // The physical servo ALWAYS opens to 45°.
-    // The command tells the ESP32 how long to keep it open.
-    //
-
-    await supabase
-        .from('servo')
-        .update({
-      'angle': 45,
-      'command': portion,
-      'last_confirmed': 0,
-    })
-        .eq('id', 27);
-
-    // =================================================
-    // 2. SAVE FEEDING HISTORY
-    // =================================================
-
-    await supabase.from('feeding_logs').insert({
-      'angle': 45,
-      'portion_label': portionLabel,
-      'trigger_type': 'manual',
-      'fed_at': DateTime.now().toUtc().toIso8601String(),
-    });
-
-    // =================================================
-    // 3. PAW ANIMATION
-    // =================================================
-
-    _pawController.forward(from: 0);
-
-    // =================================================
-    // 4. WAIT FOR ESP32 TO FINISH FEEDING
-    // =================================================
-    //
-    // ESP32 is responsible for:
-    // Small  = 0.5 sec
-    // Medium = 1 sec
-    // Full   = 2 sec
-    // then automatically closing the feeder.
-    //
-
-    final feedingDuration = _getFeedingDuration(portion);
-
-    await Future.delayed(
-      feedingDuration + const Duration(milliseconds: 800),
-    );
-
-    if (!mounted) return;
+    final String portion = _selectedPortion;
+    final String portionLabel = _getPortionLabel(portion);
 
     setState(() {
-      _status = '✓ Fed successfully! ($portionLabel Portion)';
+      _isFeeding = true;
+      _status = "🍖 Dispensing ($portionLabel)...";
     });
-  } catch (e) {
-    if (!mounted) return;
 
-    setState(() {
-      _status = "❌ Error: $e";
-    });
-  } finally {
-    if (!mounted) return;
+    try {
+      // Updates the "servo" row so the ESP32 starts dispensing.
+      await supabase.from('servo').update({
+        'angle': 45,
+        'command': portion,
+        'last_confirmed': 0,
+      }).eq('id', 27);
 
-    setState(() {
-      _isFeeding = false;
-    });
+      // Saves the feeding in the history table.
+      await supabase.from('feeding_logs').insert({
+        'angle': 45,
+        'portion_label': portionLabel,
+        'trigger_type': 'manual',
+        'fed_at': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      _pawController.forward(from: 0);
+
+      final feedingDuration = _getFeedingDuration(portion);
+
+      await Future.delayed(
+        feedingDuration + const Duration(milliseconds: 800),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _status = '✓ Fed successfully! ($portionLabel Portion)';
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _status = "❌ Error: $e";
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isFeeding = false);
+      }
+    }
   }
-}
-///////////
-///
-// =========================
-// GATE SERVO - OPEN
-// =========================
 
-Future<void> openGate() async {
-  if (_isGateOpening || _isGateClosing) return;
 
-  setState(() {
-    _isGateOpening = true;
-    _status = '🔓 Opening gate...';
-  });
+  // =========================
+  // FEEDER DOOR - OPEN
+  // =========================
+  // The app does not move the servo directly. It updates the
+  // "command" in Supabase and the ESP32 moves the servo.
+  Future<void> openGate() async {
+    // Prevents conflicting door operations.
+    if (_isGateOpening || _isGateClosing) return;
 
-  try {
-    await supabase
-        .from('gate_control')
-        .update({
-      'mode': 'OPEN',
-      'command': 'open',
-      'angle': 50,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    })
-        .eq('id', 1);
-
-    if (!mounted) return;
+    // NEW: Extra safety - do nothing if the door is already open.
+    if (_isDoorOpen == true) return;
 
     setState(() {
-      _status = '✓ Gate opened';
+      _isGateOpening = true;
+      _status = '🔓 Opening feeder...';
     });
-  } catch (e) {
-    if (!mounted) return;
 
-    setState(() {
-      _status = '❌ Gate error: $e';
-    });
-  } finally {
-    if (!mounted) return;
+    try {
+      await supabase
+          .from('feeder_door')
+          .update({'command': 'open'})
+          .eq('id', 1);
 
-    setState(() {
-      _isGateOpening = false;
-    });
+      if (!mounted) return;
+
+      setState(() {
+        // NEW: Update immediately so the OPEN button disables right
+        // away, without waiting for the realtime event.
+        _isDoorOpen = true;
+        _status = '✓ Feeder opened';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = '❌ Feeder error: $e');
+    } finally {
+      if (mounted) setState(() => _isGateOpening = false);
+    }
   }
-}
-///
-///
-// =========================
-// GATE SERVO - CLOSE
-// =========================
 
-Future<void> closeGate() async {
-  if (_isGateOpening || _isGateClosing) return;
 
-  setState(() {
-    _isGateClosing = true;
-    _status = '🔒 Closing gate...';
-  });
+  // =========================
+  // FEEDER DOOR - CLOSE
+  // =========================
+  Future<void> closeGate() async {
+    // Prevents conflicting door operations.
+    if (_isGateOpening || _isGateClosing) return;
 
-  try {
-    await supabase
-        .from('gate_control')
-        .update({
-      'mode': 'CLOSED',
-      'command': 'close',
-      'angle': 0,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    })
-        .eq('id', 1);
-
-    if (!mounted) return;
+    // NEW: Extra safety - do nothing if the door is already closed.
+    if (_isDoorOpen == false) return;
 
     setState(() {
-      _status = '✓ Gate closed';
+      _isGateClosing = true;
+      _status = '🔒 Closing feeder...';
     });
-  } catch (e) {
-    if (!mounted) return;
 
-    setState(() {
-      _status = '❌ Gate error: $e';
-    });
-  } finally {
-    if (!mounted) return;
+    try {
+      await supabase
+          .from('feeder_door')
+          .update({'command': 'close'})
+          .eq('id', 1);
 
-    setState(() {
-      _isGateClosing = false;
-    });
+      if (!mounted) return;
+
+      setState(() {
+        // NEW: Update immediately so the CLOSE button disables right
+        // away, without waiting for the realtime event.
+        _isDoorOpen = false;
+        _status = '✓ Feeder closed';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = '❌ Feeder error: $e');
+    } finally {
+      if (mounted) setState(() => _isGateClosing = false);
+    }
   }
-}
-///
-//////
+
+
   // =========================
   // DISPOSE
   // =========================
-
   @override
   void dispose() {
+    // Stops the pet detection timer.
     _detectionTimer?.cancel();
+
+    // NEW: Stops listening to the door state.
+    _doorSub?.cancel();
+
     _pawController.dispose();
     _pulseController.dispose();
+    _shimmerController.dispose();
+
     super.dispose();
   }
+
 
   // =========================
   // BUILD
   // =========================
-
   @override
   Widget build(BuildContext context) {
+    // True while any major operation is running.
+    final busy = _isFeeding || _isGateOpening || _isGateClosing;
+
     return Scaffold(
       body: Stack(
         children: [
+
           // ---- BACKGROUND ----
           Container(
             decoration: const BoxDecoration(
@@ -389,82 +452,146 @@ Future<void> closeGate() async {
             ),
           ),
 
-          // ---- DECORATIVE PAW PRINTS ----
+
+          // ---- SOFT BLOBS ----
+          Positioned(
+            top: -60,
+            right: -50,
+            child: Container(
+              width: 200,
+              height: 200,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    _salmon.withOpacity(0.3),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          Positioned(
+            bottom: -40,
+            left: -50,
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    _cream.withOpacity(0.7),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+
+          // ---- GHOST PAWS ----
           const Positioned(
-            top: 70,
+            top: 80,
             left: -10,
             child: _GhostPaw(size: 46, angle: -0.4),
           ),
+
           const Positioned(
-            top: 140,
+            top: 150,
             right: 6,
             child: _GhostPaw(size: 30, angle: 0.5),
           ),
+
           const Positioned(
-            bottom: 90,
+            bottom: 100,
             left: 18,
             child: _GhostPaw(size: 34, angle: 0.2),
           ),
+
           const Positioned(
-            bottom: 30,
+            bottom: 40,
             right: -6,
             child: _GhostPaw(size: 50, angle: -0.3),
           ),
 
+
           SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(
-                20, 12, 20, 28,
-              ),
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
 
                   // =========================
-                  // HEADER
+                  // LIVE CAMERA
                   // =========================
-
-                    
-
-                  const SizedBox(height: 10),
-
-                  
-
-                  const SizedBox(height: 22),
-
-                  // =========================
-                  // CAMERA
-                  // =========================
-
                   Stack(
                     children: [
+
                       Container(
                         decoration: BoxDecoration(
-                          borderRadius:
-                              BorderRadius.circular(28),
+                          borderRadius: BorderRadius.circular(30),
                           border: Border.all(
                             color: Colors.white,
                             width: 4,
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: _brown.withOpacity(0.18),
-                              blurRadius: 16,
-                              offset: const Offset(0, 8),
+                              color: _brown.withOpacity(0.22),
+                              blurRadius: 22,
+                              offset: const Offset(0, 12),
+                            ),
+                            BoxShadow(
+                              color: _salmon.withOpacity(0.15),
+                              blurRadius: 30,
+                              offset: const Offset(0, 6),
                             ),
                           ],
                         ),
+
                         child: ClipRRect(
-                          borderRadius:
-                              BorderRadius.circular(24),
-                          child: MjpegView( 
-                            uri:
-                               'http://192.168.1.9:5000/video',
-                            width: double.infinity,
-                            height: 220,
-                            fit: BoxFit.cover,
+                          borderRadius: BorderRadius.circular(26),
+
+                          child: Stack(
+                            children: [
+
+                              // MJPEG live stream from the Flask server.
+                              MjpegView(
+                                uri: 'http://192.168.1.13:5000/video',
+                                width: double.infinity,
+                                height: 230,
+                                fit: BoxFit.cover,
+                              ),
+
+                              // Dark gradient at the bottom so overlay
+                              // information is easier to see.
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: Container(
+                                  height: 70,
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.transparent,
+                                        Colors.black.withOpacity(0.45),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
+
 
                       // "LIVE" badge
                       Positioned(
@@ -472,21 +599,27 @@ Future<void> closeGate() async {
                         left: 14,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
+                            horizontal: 11,
+                            vertical: 6,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.55),
-                            borderRadius:
-                                BorderRadius.circular(20),
+                            color: Colors.black.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.2),
+                            ),
                           ),
+
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+
+                              // Pulsing red dot.
                               AnimatedBuilder(
                                 animation: _pulseController,
                                 builder: (context, _) {
                                   final t = _pulseController.value;
+
                                   return Container(
                                     width: 8,
                                     height: 8,
@@ -497,18 +630,27 @@ Future<void> closeGate() async {
                                         const Color(0xFFFFB4B4),
                                         t,
                                       ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: const Color(0xFFFF5C5C)
+                                              .withOpacity(0.6),
+                                          blurRadius: 8,
+                                        ),
+                                      ],
                                     ),
                                   );
                                 },
                               ),
+
                               const SizedBox(width: 6),
+
                               Text(
                                 'LIVE',
                                 style: GoogleFonts.dmSans(
                                   color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.6,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.8,
                                 ),
                               ),
                             ],
@@ -516,15 +658,31 @@ Future<void> closeGate() async {
                         ),
                       ),
 
-                      // paw corner sticker
+
+                      // Detection pill overlay (bottom-left)
                       Positioned(
-                        bottom: 12,
-                        right: 12,
+                        bottom: 14,
+                        left: 14,
+                        child: _buildDetectionPill(),
+                      ),
+
+
+                      // Paw corner sticker
+                      Positioned(
+                        bottom: 14,
+                        right: 14,
                         child: Container(
-                          padding: const EdgeInsets.all(7),
+                          padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.85),
+                            color: Colors.white.withOpacity(0.9),
                             shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: _salmon.withOpacity(0.3),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
                           ),
                           child: const Icon(
                             Icons.pets,
@@ -536,74 +694,97 @@ Future<void> closeGate() async {
                     ],
                   ),
 
-                  const SizedBox(height: 18),
 
-                  // =========================
-                  // PET DETECTION CARD
-                  // =========================
+                  // Confidence bar (only shows if a pet is detected)
+                  if (_petDetection != 'No Pet Detected') ...[
+                    const SizedBox(height: 12),
+                    _buildConfidenceBar(),
+                  ],
 
-                  
+
+                  const SizedBox(height: 22),
+
 
                   // =========================
                   // PORTION SELECTORS
                   // =========================
-
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Choose a Portion to Feed🥣',
-                      style: GoogleFonts.fraunces(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: _brownSoft,
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: _salmon.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.restaurant_menu_rounded,
+                          size: 14,
+                          color: _salmon,
+                        ),
                       ),
-                    ),
+
+                      const SizedBox(width: 8),
+
+                      Text(
+                        'Choose a portion 🥣',
+                        style: GoogleFonts.fraunces(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: _brownSoft,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                    ],
                   ),
+
 
                   const SizedBox(height: 12),
 
+
                   Row(
- children: [
-  
-    _buildPresetChip(
-      label: 'Small',
-      subtext: 'Portion',
-      portion: 'small',
-      icon: Icons.restaurant,
-    ),
+                    children: [
+                      _buildPresetChip(
+                        label: 'Small',
+                        subtext: 'Portion',
+                        portion: 'small',
+                        icon: Icons.restaurant,
+                      ),
 
-    const SizedBox(width: 12),
+                      const SizedBox(width: 10),
 
-    _buildPresetChip(
-      label: 'Medium',
-      subtext: 'Portion',
-      portion: 'medium',
-      icon: Icons.set_meal,
-    ),
+                      _buildPresetChip(
+                        label: 'Medium',
+                        subtext: 'Portion',
+                        portion: 'medium',
+                        icon: Icons.set_meal,
+                      ),
 
-    const SizedBox(width: 12),
+                      const SizedBox(width: 10),
 
-    _buildPresetChip(
-      label: 'Full',
-      subtext: 'Portion',
-      portion: 'full',
-      icon: Icons.dinner_dining,
-    ),
-  ],
-),
+                      _buildPresetChip(
+                        label: 'Full',
+                        subtext: 'Portion',
+                        portion: 'full',
+                        icon: Icons.dinner_dining,
+                      ),
+                    ],
+                  ),
 
-                  const SizedBox(height: 28),
+
+                  const SizedBox(height: 24),
+
 
                   // =========================
                   // FEED NOW BUTTON
                   // =========================
-
                   SizedBox(
                     width: double.infinity,
-                    height: 64,
+                    height: 66,
+
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(24),
+                        borderRadius: BorderRadius.circular(26),
+
                         gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
@@ -611,32 +792,37 @@ Future<void> closeGate() async {
                               ? [_blush, _blush]
                               : [_salmon, _peach],
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _salmon.withOpacity(0.4),
-                            blurRadius: 18,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
+
+                        boxShadow: _isFeeding
+                            ? []
+                            : [
+                                BoxShadow(
+                                  color: _salmon.withOpacity(0.5),
+                                  blurRadius: 22,
+                                  offset: const Offset(0, 10),
+                                ),
+                              ],
                       ),
+
                       child: ElevatedButton.icon(
-                        onPressed: _isFeeding ? null : feedNow,
+                        onPressed: busy ? null : feedNow,
+
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.transparent,
                           shadowColor: Colors.transparent,
                           foregroundColor: Colors.white,
                           elevation: 0,
                           shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(24),
+                            borderRadius: BorderRadius.circular(26),
                           ),
                         ),
+
                         icon: _isFeeding
                             ? const SizedBox(
-                                width: 20,
-                                height: 20,
+                                width: 22,
+                                height: 22,
                                 child: CircularProgressIndicator(
-                                  strokeWidth: 2.4,
+                                  strokeWidth: 2.6,
                                   color: Colors.white,
                                 ),
                               )
@@ -644,22 +830,22 @@ Future<void> closeGate() async {
                                 animation: _pawAnimation,
                                 builder: (context, _) {
                                   return Transform.rotate(
-                                    angle:
-                                        _pawAnimation.value * 0.35,
+                                    angle: _pawAnimation.value * 0.35,
                                     child: const Icon(
                                       Icons.pets,
-                                      size: 26,
+                                      size: 28,
                                       color: Colors.white,
                                     ),
                                   );
                                 },
                               ),
+
                         label: Text(
                           _isFeeding ? 'FEEDING...' : 'FEED NOW',
                           style: GoogleFonts.dmSans(
                             fontSize: 19,
                             fontWeight: FontWeight.w800,
-                            letterSpacing: 1.1,
+                            letterSpacing: 1.2,
                             color: Colors.white,
                           ),
                         ),
@@ -667,186 +853,152 @@ Future<void> closeGate() async {
                     ),
                   ),
 
-                  const SizedBox(height: 16),
-
-                  // =========================
-                  // OPEN GATE BUTTON
-                  // (same salmon→peach gradient as FEED NOW,
-                  // so the whole feeder-control group reads as
-                  // one family of actions)
-                  // =========================
-
-                  SizedBox(
-                    width: double.infinity,
-                    height: 58,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(22),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors:
-                              (_isFeeding || _isGateOpening || _isGateClosing)
-                                  ? [_blush, _blush]
-                                  : [_salmon, _peach],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _salmon.withOpacity(0.35),
-                            blurRadius: 14,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: ElevatedButton.icon(
-                        onPressed:
-                            (_isFeeding ||
-                                    _isGateOpening ||
-                                    _isGateClosing)
-                                ? null
-                                : openGate,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(22),
-                          ),
-                        ),
-                        icon: _isGateOpening
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.4,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(
-                                Icons.lock_open_rounded,
-                                size: 25,
-                                color: Colors.white,
-                              ),
-                        label: Text(
-                          _isGateOpening
-                              ? 'OPENING...'
-                              : 'OPEN FEEDER',
-                          style: GoogleFonts.dmSans(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  // =========================
-                  // CLOSE GATE BUTTON
-                  // (same gradient family, slightly deeper tone
-                  // via _brown so it still reads as "close" next
-                  // to "open" without breaking the palette)
-                  // =========================
-
-                  SizedBox(
-                    width: double.infinity,
-                    height: 58,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(22),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors:
-                              (_isFeeding || _isGateOpening || _isGateClosing)
-                                  ? [_blush, _blush]
-                                  : [_brownSoft, _salmon],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _brownSoft.withOpacity(0.35),
-                            blurRadius: 14,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: ElevatedButton.icon(
-                        onPressed:
-                            (_isFeeding ||
-                                    _isGateOpening ||
-                                    _isGateClosing)
-                                ? null
-                                : closeGate,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(22),
-                          ),
-                        ),
-                        icon: _isGateClosing
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.4,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(
-                                Icons.lock_rounded,
-                                size: 25,
-                                color: Colors.white,
-                              ),
-                        label: Text(
-                          _isGateClosing
-                              ? 'CLOSING...'
-                              : 'CLOSE FEEDER',
-                          style: GoogleFonts.dmSans(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
 
                   const SizedBox(height: 20),
 
-                  // =========================
-                  // STATUS
-                  // =========================
-                  // =========================
-                  // STATUS
-                  // =========================
 
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 12,
-                      horizontal: 16,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.6),
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: Text(
-                      _status,
-                      style: GoogleFonts.dmSans(
-                        fontSize: 15,
-                        color: _brownSoft,
-                        fontWeight: FontWeight.w600,
+                  // =========================
+                  // DOOR CONTROLS
+                  // =========================
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: _leafGreen.withOpacity(0.18),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.door_sliding_rounded,
+                          size: 14,
+                          color: _leafGreen,
+                        ),
                       ),
-                      textAlign: TextAlign.center,
+
+                      const SizedBox(width: 8),
+
+                      Text(
+                        'Feeder Door',
+                        style: GoogleFonts.fraunces(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: _brownSoft,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                    ],
+                  ),
+
+
+                  const SizedBox(height: 12),
+
+
+                  // OPEN and CLOSE buttons side-by-side.
+                  Row(
+                    children: [
+
+                      // OPEN button.
+                      // NEW: disabled when the door is already OPEN.
+                      Expanded(
+                        child: _DoorButton(
+                          isBusy: busy,
+                          isDisabled: _isDoorOpen == true,
+                          isWorking: _isGateOpening,
+                          label: 'OPEN',
+                          workingLabel: 'OPENING...',
+                          icon: Icons.lock_open_rounded,
+                          color: _leafGreen,
+                          onPressed: openGate,
+                        ),
+                      ),
+
+                      const SizedBox(width: 12),
+
+                      // CLOSE button.
+                      // NEW: disabled when the door is already CLOSED.
+                      Expanded(
+                        child: _DoorButton(
+                          isBusy: busy,
+                          isDisabled: _isDoorOpen == false,
+                          isWorking: _isGateClosing,
+                          label: 'CLOSE',
+                          workingLabel: 'CLOSING...',
+                          icon: Icons.lock_rounded,
+                          color: const Color(0xFFC23B3B),
+                          onPressed: closeGate,
+                        ),
+                      ),
+                    ],
+                  ),
+
+
+                  const SizedBox(height: 20),
+
+
+                  // =========================
+                  // STATUS CARD
+                  // =========================
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeOutCubic,
+                    width: double.infinity,
+
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 16,
+                      horizontal: 18,
+                    ),
+
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.75),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.9),
+                        width: 1.2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _brownSoft.withOpacity(0.08),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+
+                    child: Row(
+                      children: [
+
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                _salmon.withOpacity(0.2),
+                                _peach.withOpacity(0.15),
+                              ],
+                            ),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.info_outline_rounded,
+                            size: 16,
+                            color: _salmon,
+                          ),
+                        ),
+
+                        const SizedBox(width: 12),
+
+                        Expanded(
+                          child: Text(
+                            _status,
+                            style: GoogleFonts.dmSans(
+                              fontSize: 14,
+                              color: _brownSoft,
+                              fontWeight: FontWeight.w700,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -858,56 +1010,79 @@ Future<void> closeGate() async {
     );
   }
 
-  // =========================
-  // DETECTION PILL (UI helper — reads existing state only)
-  // =========================
 
+  // =========================
+  // DETECTION PILL
+  // =========================
+  // Small status indicator shown on top of the camera.
   Widget _buildDetectionPill() {
     late final Color pillColor;
     late final Color dotColor;
     late final String label;
+    late final IconData icon;
 
     if (_petDetection == 'Yuri') {
-      pillColor = _leafGreen.withOpacity(0.15);
+      pillColor = _leafGreen.withOpacity(0.2);
       dotColor = _leafGreen;
       label = 'Yuri Detected';
+      icon = Icons.pets;
     } else if (_petDetection == 'Unknown Pet') {
-      pillColor = _amber.withOpacity(0.18);
+      pillColor = _amber.withOpacity(0.22);
       dotColor = _amber;
       label = 'Unknown Pet';
+      icon = Icons.help_outline_rounded;
     } else {
-      pillColor = Colors.grey.withOpacity(0.15);
-      dotColor = Colors.grey;
+      pillColor = Colors.black.withOpacity(0.5);
+      dotColor = Colors.white70;
       label = 'No Pet Detected';
+      icon = Icons.visibility_off_rounded;
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(
-        vertical: 10,
-        horizontal: 16,
-      ),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+
       decoration: BoxDecoration(
-        color: pillColor,
+        color: _petDetection == 'No Pet Detected'
+            ? pillColor
+            : Colors.white.withOpacity(0.95),
+
         borderRadius: BorderRadius.circular(30),
+
+        boxShadow: _petDetection == 'No Pet Detected'
+            ? null
+            : [
+                BoxShadow(
+                  color: dotColor.withOpacity(0.35),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
       ),
+
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+
           Container(
-            width: 10,
-            height: 10,
+            width: 18,
+            height: 18,
             decoration: BoxDecoration(
+              color: dotColor.withOpacity(0.2),
               shape: BoxShape.circle,
-              color: dotColor,
             ),
+            child: Icon(icon, size: 11, color: dotColor),
           ),
-          const SizedBox(width: 8),
+
+          const SizedBox(width: 7),
+
           Text(
             label,
             style: GoogleFonts.dmSans(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: _brownSoft,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w800,
+              color: _petDetection == 'No Pet Detected'
+                  ? Colors.white
+                  : _brownSoft,
             ),
           ),
         ],
@@ -915,143 +1090,341 @@ Future<void> closeGate() async {
     );
   }
 
+
+  // =========================
+  // CONFIDENCE BAR
+  // =========================
   Widget _buildConfidenceBar() {
+    // Keeps the value between 0.0 and 1.0.
     final pct = _petConfidence.clamp(0.0, 1.0);
 
-    return Column(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: LinearProgressIndicator(
-            value: pct,
-            minHeight: 8,
-            backgroundColor: _blush.withOpacity(0.5),
-            valueColor:
-                const AlwaysStoppedAnimation<Color>(_salmon),
-          ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.75),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.9),
+          width: 1.2,
         ),
-        const SizedBox(height: 6),
-        Text(
-          '${(_petConfidence * 100).toStringAsFixed(1)}% confidence',
-          style: GoogleFonts.dmSans(
-            fontSize: 12.5,
-            color: _brownSoft.withOpacity(0.75),
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ],
-    );
-  }
+      ),
 
-  // =========================
-  // PRESET PORTIONS
-  // =========================
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
 
-  Widget _buildPresetChip({
-  required String label,
-  required String subtext,
-  required String portion,
-  required IconData icon,
-}) {
-  final isSelected = _selectedPortion == portion;
-
-  return Expanded(
-    child: GestureDetector(
-      onTap: _isFeeding
-          ? null
-          : () {
-              setState(() {
-                _selectedPortion = portion;
-              });
-            },
-      child: AnimatedScale(
-        scale: isSelected ? 1.04 : 1.0,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutBack,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(
-            vertical: 16,
-            horizontal: 10,
-          ),
-          decoration: BoxDecoration(
-            gradient: isSelected
-                ? const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      _salmon,
-                      _peach,
-                    ],
-                  )
-                : null,
-            color: isSelected
-                ? null
-                : Colors.white.withOpacity(0.85),
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(
-              color: isSelected
-                  ? Colors.transparent
-                  : _blush,
-              width: 2,
-            ),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: _salmon.withOpacity(0.35),
-                      blurRadius: 12,
-                      offset: const Offset(0, 5),
-                    ),
-                  ]
-                : [],
-          ),
-          child: Column(
+          Row(
             children: [
               Icon(
-                icon,
-                color: isSelected
-                    ? Colors.white
-                    : _salmon,
-                size: 26,
+                Icons.analytics_outlined,
+                size: 14,
+                color: _brownSoft.withOpacity(0.7),
               ),
 
-              const SizedBox(height: 8),
+              const SizedBox(width: 6),
 
               Text(
-                label,
+                'Detection confidence',
                 style: GoogleFonts.dmSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: isSelected
-                      ? Colors.white
-                      : _brownSoft,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: _brownSoft.withOpacity(0.8),
                 ),
               ),
 
-              const SizedBox(height: 2),
+              const Spacer(),
 
               Text(
-                subtext,
-                style: GoogleFonts.dmSans(
-                  fontSize: 11.5,
-                  color: isSelected
-                      ? Colors.white70
-                      : _brownSoft.withOpacity(0.7),
+                '${(_petConfidence * 100).toStringAsFixed(1)}%',
+                style: GoogleFonts.fraunces(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: _salmon,
                 ),
               ),
             ],
           ),
+
+          const SizedBox(height: 8),
+
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: pct),
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeOutCubic,
+
+              builder: (context, value, _) {
+                return LinearProgressIndicator(
+                  value: value,
+                  minHeight: 9,
+                  backgroundColor: _blush.withOpacity(0.5),
+                  valueColor:
+                      const AlwaysStoppedAnimation<Color>(_salmon),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  // =========================
+  // PRESET PORTIONS
+  // =========================
+  // Creates one of the Small, Medium, or Full portion buttons.
+  Widget _buildPresetChip({
+    required String label,
+    required String subtext,
+    required String portion,
+    required IconData icon,
+  }) {
+    final isSelected = _selectedPortion == portion;
+
+    return Expanded(
+      child: GestureDetector(
+
+        // Prevents changing the portion while feeding.
+        onTap: _isFeeding
+            ? null
+            : () {
+                setState(() => _selectedPortion = portion);
+              },
+
+        child: AnimatedScale(
+          scale: isSelected ? 1.05 : 1.0,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutBack,
+
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+
+            padding: const EdgeInsets.symmetric(
+              vertical: 16,
+              horizontal: 10,
+            ),
+
+            decoration: BoxDecoration(
+              gradient: isSelected
+                  ? const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [_salmon, _peach],
+                    )
+                  : null,
+
+              color: isSelected ? null : Colors.white.withOpacity(0.92),
+
+              borderRadius: BorderRadius.circular(26),
+
+              border: Border.all(
+                color: isSelected
+                    ? Colors.transparent
+                    : _blush.withOpacity(0.9),
+                width: 2,
+              ),
+
+              boxShadow: isSelected
+                  ? [
+                      BoxShadow(
+                        color: _salmon.withOpacity(0.4),
+                        blurRadius: 16,
+                        offset: const Offset(0, 8),
+                      ),
+                    ]
+                  : [
+                      BoxShadow(
+                        color: _brownSoft.withOpacity(0.06),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+            ),
+
+            child: Column(
+              children: [
+
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? Colors.white.withOpacity(0.25)
+                        : _salmon.withOpacity(0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    icon,
+                    color: isSelected ? Colors.white : _salmon,
+                    size: 22,
+                  ),
+                ),
+
+                const SizedBox(height: 8),
+
+                Text(
+                  label,
+                  style: GoogleFonts.dmSans(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: isSelected ? Colors.white : _brownSoft,
+                  ),
+                ),
+
+                const SizedBox(height: 1),
+
+                Text(
+                  subtext,
+                  style: GoogleFonts.dmSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isSelected
+                        ? Colors.white70
+                        : _brownSoft.withOpacity(0.6),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
-// =========================
-// SMALL DECORATIVE WIDGETS (UI only — no state/logic)
-// =========================
 
+// ============================================================
+// DOOR BUTTON
+// ============================================================
+// Reusable widget for the feeder door OPEN and CLOSE buttons.
+// ============================================================
+
+class _DoorButton extends StatelessWidget {
+
+  // True while ANY operation (feeding / opening / closing) is running.
+  final bool isBusy;
+
+  // NEW: True when the door is already in the state this button would
+  // set (e.g. OPEN button while the door is already open).
+  final bool isDisabled;
+
+  // True while THIS button's own operation is running.
+  final bool isWorking;
+
+  // Normal button text.
+  final String label;
+
+  // Text displayed while the operation is running.
+  final String workingLabel;
+
+  // Icon displayed on the button.
+  final IconData icon;
+
+  // Button color.
+  final Color color;
+
+  // Function executed when the button is pressed.
+  final VoidCallback onPressed;
+
+  const _DoorButton({
+    required this.isBusy,
+    required this.isDisabled, // NEW
+    required this.isWorking,
+    required this.label,
+    required this.workingLabel,
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+
+    // NEW: Disabled when busy OR when the door is already in this state.
+    final disabled = isBusy || isDisabled;
+
+    return SizedBox(
+      height: 56,
+
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: disabled
+                ? [
+                    const Color(0xFFFFD6C4),
+                    const Color(0xFFFFD6C4),
+                  ]
+                : [
+                    color,
+                    color.withOpacity(0.75),
+                  ],
+          ),
+
+          boxShadow: disabled
+              ? []
+              : [
+                  BoxShadow(
+                    color: color.withOpacity(0.4),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+        ),
+
+        child: ElevatedButton.icon(
+
+          // null disables the button.
+          onPressed: disabled ? null : onPressed,
+
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            shadowColor: Colors.transparent,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+          ),
+
+          icon: isWorking
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.4,
+                    color: Colors.white,
+                  ),
+                )
+              : Icon(icon, size: 22, color: Colors.white),
+
+          label: Text(
+            isWorking ? workingLabel : label,
+            style: GoogleFonts.dmSans(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// ============================================================
+// DECORATIVE WIDGETS
+// ============================================================
+
+// Circular paw icon with a SmartFeed gradient (decorative only).
 class _PawBadge extends StatelessWidget {
   const _PawBadge();
 
@@ -1060,6 +1433,7 @@ class _PawBadge extends StatelessWidget {
     return Container(
       width: 38,
       height: 38,
+
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
         gradient: LinearGradient(
@@ -1071,6 +1445,7 @@ class _PawBadge extends StatelessWidget {
           ],
         ),
       ),
+
       child: const Icon(
         Icons.pets,
         size: 20,
@@ -1080,11 +1455,16 @@ class _PawBadge extends StatelessWidget {
   }
 }
 
+
+// Faded decorative paw icon used in the page background.
 class _GhostPaw extends StatelessWidget {
   final double size;
   final double angle;
 
-  const _GhostPaw({required this.size, required this.angle});
+  const _GhostPaw({
+    required this.size,
+    required this.angle,
+  });
 
   @override
   Widget build(BuildContext context) {

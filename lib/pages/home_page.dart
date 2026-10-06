@@ -16,12 +16,47 @@ import 'history_page.dart';
 import 'login_page.dart';
 import '../widgets/chatbot.dart';
 import 'dart:async';
+import 'package:firebase_messaging/firebase_messaging.dart';
+
+
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
   @override
   State<HomePage> createState() => _HomePageState();
+}
+
+Future<void> _registerFcmToken() async {
+  try {
+    final user = supabase.auth.currentUser;
+
+    if (user == null) {
+      debugPrint('No logged-in user.');
+      return;
+    }
+
+    final token = await FirebaseMessaging.instance.getToken();
+
+    if (token == null || token.isEmpty) {
+      debugPrint('FCM token is empty.');
+      return;
+    }
+
+    await supabase.from('fcm_tokens').upsert(
+      {
+        'user_id': user.id,
+        'token': token,
+        'updated_at':
+            DateTime.now().toUtc().toIso8601String(),
+      },
+      onConflict: 'user_id,token',
+    );
+
+    debugPrint('FCM token registered successfully.');
+  } catch (e) {
+    debugPrint('FCM registration error: $e');
+  }
 }
 
 class _HomePageState extends State<HomePage> {
@@ -92,7 +127,7 @@ class _HomePageState extends State<HomePage> {
   final List<Map<String, dynamic>> _navItems = const [
     {
       'icon': Icons.tune_rounded,
-      'label': 'Contoller',
+      'label': 'Controller',
     },
     {
       'icon': Icons.schedule_rounded,
@@ -133,16 +168,16 @@ class _HomePageState extends State<HomePage> {
   // INIT
   // ============================================================
 
-  @override
-  void initState() {
-    super.initState();
+@override
+void initState() {
+  super.initState();
 
-    // Initial food-level fetch
-    _fetchFoodLevel();
+  _fetchFoodLevel();
+  _subscribeToFoodLevel();
 
-    // Realtime food-level updates
-    _subscribeToFoodLevel();
-  }
+  _registerFcmToken();
+  saveFcmToken();
+}
 
   // ============================================================
   // DISPOSE

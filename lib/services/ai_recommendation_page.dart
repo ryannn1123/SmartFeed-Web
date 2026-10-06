@@ -1,13 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/ai_recommendation_service.dart';
 import '../services/recommendation_data_service.dart';
-
-// =========================
-// SHARED PALETTE
-// (matches servo_page / schedule_page / history_page / vet_page)
-// =========================
 
 class _Palette {
   static const Color salmon = Color(0xFFFA7268);
@@ -21,9 +17,7 @@ class _Palette {
 }
 
 class AIRecommendationPage extends StatefulWidget {
-  const AIRecommendationPage({
-    super.key,
-  });
+  const AIRecommendationPage({super.key});
 
   @override
   State<AIRecommendationPage> createState() =>
@@ -32,22 +26,65 @@ class AIRecommendationPage extends StatefulWidget {
 
 class _AIRecommendationPageState
     extends State<AIRecommendationPage> {
-
   AIRecommendation? recommendation;
 
-  bool loading = false;
+  bool loading = true;
+  bool generating = false;
 
   String? errorMessage;
 
   @override
   void initState() {
     super.initState();
-    generateRecommendation();
+
+    // IMPORTANT:
+    // Do NOT generate AI here.
+    // We only load the previously saved recommendation.
+    loadSavedRecommendation();
   }
 
-  Future<void> generateRecommendation() async {
+  // ============================================================
+  // LOAD SAVED RECOMMENDATION
+  // ============================================================
+
+  Future<void> loadSavedRecommendation() async {
+    if (!mounted) return;
+
     setState(() {
       loading = true;
+      errorMessage = null;
+    });
+
+    try {
+      final saved =
+          await AIRecommendationService
+              .getSavedRecommendation();
+
+      if (!mounted) return;
+
+      setState(() {
+        recommendation = saved;
+        loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        errorMessage = e.toString();
+        loading = false;
+      });
+    }
+  }
+
+  // ============================================================
+  // GENERATE NEW RECOMMENDATION
+  // ============================================================
+
+  Future<void> generateRecommendation() async {
+    if (generating) return;
+
+    setState(() {
+      generating = true;
       errorMessage = null;
     });
 
@@ -63,7 +100,8 @@ class _AIRecommendationPageState
       if (logs.isEmpty) {
         throw Exception(
           'There is not enough feeding history yet. '
-          'Feed your pet several times before generating an AI recommendation.',
+          'Feed your pet several times before generating '
+          'an AI recommendation.',
         );
       }
 
@@ -74,21 +112,261 @@ class _AIRecommendationPageState
         schedules: schedules,
       );
 
+      // Save it to Supabase.
+      //
+      // Because user_id is UNIQUE, this replaces the
+      // previous recommendation instead of creating another.
+      await AIRecommendationService
+          .saveRecommendation(result);
+
       if (!mounted) return;
 
       setState(() {
         recommendation = result;
-        loading = false;
+        generating = false;
       });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'New AI recommendation generated!',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
         errorMessage = e.toString();
-        loading = false;
+        generating = false;
       });
     }
   }
+
+  // ============================================================
+  // APPLY RECOMMENDATION
+  // ============================================================
+
+  Future<void> _applyRecommendation() async {
+    final r = recommendation;
+
+    if (r == null) {
+      throw Exception(
+        'No recommendation available.',
+      );
+    }
+
+    final supabase =
+        Supabase.instance.client;
+
+    final user =
+        supabase.auth.currentUser;
+
+    if (user == null) {
+      throw Exception(
+        'User is not logged in.',
+      );
+    }
+
+    int portionToAngle(String portion) {
+      switch (portion.toLowerCase()) {
+        case 'small':
+          return 45;
+
+        case 'medium':
+          return 90;
+
+        case 'full':
+          return 180;
+
+        default:
+          throw Exception(
+            'Invalid AI portion: $portion',
+          );
+      }
+    }
+
+    String normalizeTime(String time) {
+      final parts = time.split(':');
+
+      if (parts.length < 2) {
+        throw Exception(
+          'Invalid AI feeding time: $time',
+        );
+      }
+
+      final hour =
+          int.tryParse(parts[0]);
+
+      final minute =
+          int.tryParse(parts[1]);
+
+      if (hour == null ||
+          minute == null ||
+          hour < 0 ||
+          hour > 23 ||
+          minute < 0 ||
+          minute > 59) {
+        throw Exception(
+          'Invalid AI feeding time: $time',
+        );
+      }
+
+      return '${hour.toString().padLeft(2, '0')}:'
+          '${minute.toString().padLeft(2, '0')}:00';
+    }
+
+    final morningTime =
+        normalizeTime(r.morningTime);
+
+    final eveningTime =
+        normalizeTime(r.eveningTime);
+
+    final morningAngle =
+        portionToAngle(r.morningPortion);
+
+    final eveningAngle =
+        portionToAngle(r.eveningPortion);
+
+    // ----------------------------------------------------------
+    // GET USER'S EXISTING SCHEDULES
+    // ----------------------------------------------------------
+
+    final existingResponse =
+        await supabase
+            .from('schedule')
+            .select(
+              '''
+              id,
+              feed_time,
+              angle,
+              enabled,
+              user_id,
+              feed_date
+              ''',
+            )
+            .eq('user_id', user.id)
+            .order(
+              'feed_time',
+              ascending: true,
+            );
+
+    final schedules =
+        List<Map<String, dynamic>>.from(
+      existingResponse,
+    );
+
+    Map<String, dynamic>? morningSchedule;
+
+    Map<String, dynamic>? eveningSchedule;
+
+    // ----------------------------------------------------------
+    // FIND EXISTING MORNING SCHEDULE
+    // ----------------------------------------------------------
+
+    for (final schedule in schedules) {
+      final feedTime =
+          schedule['feed_time']?.toString() ?? '';
+
+      final hour =
+          int.tryParse(
+                feedTime.split(':').first,
+              ) ??
+              0;
+
+      if (hour < 12) {
+        morningSchedule = schedule;
+        break;
+      }
+    }
+
+    // ----------------------------------------------------------
+    // FIND EXISTING EVENING SCHEDULE
+    // ----------------------------------------------------------
+
+    for (final schedule in schedules) {
+      final feedTime =
+          schedule['feed_time']?.toString() ?? '';
+
+      final hour =
+          int.tryParse(
+                feedTime.split(':').first,
+              ) ??
+              0;
+
+      if (hour >= 12) {
+        eveningSchedule = schedule;
+        break;
+      }
+    }
+
+    // ----------------------------------------------------------
+    // MORNING
+    // ----------------------------------------------------------
+
+    if (morningSchedule != null) {
+      await supabase
+          .from('schedule')
+          .update({
+        'feed_time': morningTime,
+        'angle': morningAngle,
+        'enabled': true,
+      })
+          .eq(
+            'id',
+            morningSchedule['id'],
+          )
+          .eq(
+            'user_id',
+            user.id,
+          );
+    } else {
+      await supabase
+          .from('schedule')
+          .insert({
+        'feed_time': morningTime,
+        'angle': morningAngle,
+        'enabled': true,
+        'user_id': user.id,
+      });
+    }
+
+    // ----------------------------------------------------------
+    // EVENING
+    // ----------------------------------------------------------
+
+    if (eveningSchedule != null) {
+      await supabase
+          .from('schedule')
+          .update({
+        'feed_time': eveningTime,
+        'angle': eveningAngle,
+        'enabled': true,
+      })
+          .eq(
+            'id',
+            eveningSchedule['id'],
+          )
+          .eq(
+            'user_id',
+            user.id,
+          );
+    } else {
+      await supabase
+          .from('schedule')
+          .insert({
+        'feed_time': eveningTime,
+        'angle': eveningAngle,
+        'enabled': true,
+        'user_id': user.id,
+      });
+    }
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -110,24 +388,32 @@ class _AIRecommendationPageState
         child: SafeArea(
           child: Column(
             children: [
-              // =========================
-              // HEADER (inline, with back button since this
-              // page is pushed as its own route)
-              // =========================
               Padding(
-                padding: const EdgeInsets.fromLTRB(8, 10, 20, 4),
+                padding:
+                    const EdgeInsets.fromLTRB(
+                  8,
+                  10,
+                  20,
+                  4,
+                ),
                 child: Row(
                   children: [
-                    
                     Container(
                       width: 34,
                       height: 34,
-                      decoration: const BoxDecoration(
+                      decoration:
+                          const BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [_Palette.salmon, _Palette.peach],
+                        gradient:
+                            LinearGradient(
+                          begin:
+                              Alignment.topLeft,
+                          end:
+                              Alignment.bottomRight,
+                          colors: [
+                            _Palette.salmon,
+                            _Palette.peach,
+                          ],
                         ),
                       ),
                       child: const Icon(
@@ -139,10 +425,13 @@ class _AIRecommendationPageState
                     const SizedBox(width: 10),
                     Text(
                       'AI Recommendation',
-                      style: GoogleFonts.fraunces(
-                        color: _Palette.brownSoft,
+                      style:
+                          GoogleFonts.fraunces(
+                        color:
+                            _Palette.brownSoft,
                         fontSize: 20,
-                        fontWeight: FontWeight.w700,
+                        fontWeight:
+                            FontWeight.w700,
                       ),
                     ),
                   ],
@@ -152,27 +441,46 @@ class _AIRecommendationPageState
               Expanded(
                 child: RefreshIndicator(
                   color: _Palette.salmon,
-                  onRefresh: generateRecommendation,
+                  onRefresh:
+                      loadSavedRecommendation,
                   child: ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
+                    physics:
+                        const AlwaysScrollableScrollPhysics(),
+                    padding:
+                        const EdgeInsets.fromLTRB(
+                      20,
+                      12,
+                      20,
+                      40,
+                    ),
                     children: [
                       _buildHeader(),
 
-                      const SizedBox(height: 20),
+                      const SizedBox(
+                        height: 20,
+                      ),
 
                       if (loading)
                         const Center(
                           child: Padding(
-                            padding: EdgeInsets.all(40),
-                            child: CircularProgressIndicator(
-                              color: _Palette.salmon,
+                            padding:
+                                EdgeInsets.all(40),
+                            child:
+                                CircularProgressIndicator(
+                              color:
+                                  _Palette.salmon,
                             ),
                           ),
                         ),
 
-                      if (errorMessage != null)
+                      if (!loading &&
+                          errorMessage != null)
                         _buildError(),
+
+                      if (!loading &&
+                          errorMessage == null &&
+                          recommendation == null)
+                        _buildNoRecommendation(),
 
                       if (recommendation != null &&
                           !loading)
@@ -188,11 +496,16 @@ class _AIRecommendationPageState
     );
   }
 
+  // ============================================================
+  // HEADER
+  // ============================================================
+
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
+        borderRadius:
+            BorderRadius.circular(26),
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -203,7 +516,8 @@ class _AIRecommendationPageState
         ),
         boxShadow: [
           BoxShadow(
-            color: _Palette.salmon.withOpacity(0.35),
+            color: _Palette.salmon
+                .withOpacity(0.35),
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -217,10 +531,16 @@ class _AIRecommendationPageState
                   CrossAxisAlignment.start,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.25),
-                    borderRadius: BorderRadius.circular(14),
+                  padding:
+                      const EdgeInsets.all(10),
+                  decoration:
+                      BoxDecoration(
+                    color: Colors.white
+                        .withOpacity(0.25),
+                    borderRadius:
+                        BorderRadius.circular(
+                      14,
+                    ),
                   ),
                   child: const Icon(
                     Icons.auto_awesome,
@@ -228,36 +548,166 @@ class _AIRecommendationPageState
                     size: 26,
                   ),
                 ),
-                const SizedBox(height: 14),
+
+                const SizedBox(
+                  height: 14,
+                ),
+
                 Text(
                   'SmartFeed AI',
-                  style: GoogleFonts.fraunces(
+                  style:
+                      GoogleFonts.fraunces(
                     color: Colors.white,
                     fontSize: 26,
-                    fontWeight: FontWeight.w700,
+                    fontWeight:
+                        FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 6),
+
+                const SizedBox(
+                  height: 6,
+                ),
+
                 Text(
-                  "Your pet's recent feeding history.",
-                  style: GoogleFonts.dmSans(
-                    color: Colors.white.withOpacity(0.92),
+                  "Your pet's feeding recommendation.",
+                  style:
+                      GoogleFonts.dmSans(
+                    color: Colors.white
+                        .withOpacity(0.92),
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontWeight:
+                        FontWeight.w500,
                   ),
                 ),
               ],
             ),
           ),
+
           Icon(
             Icons.pets,
             size: 64,
-            color: Colors.white.withOpacity(0.22),
+            color: Colors.white
+                .withOpacity(0.22),
           ),
         ],
       ),
     );
   }
+
+  // ============================================================
+  // NO RECOMMENDATION YET
+  // ============================================================
+
+  Widget _buildNoRecommendation() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white
+            .withOpacity(0.75),
+        borderRadius:
+            BorderRadius.circular(24),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.auto_awesome,
+            size: 50,
+            color: _Palette.salmon,
+          ),
+
+          const SizedBox(
+            height: 16,
+          ),
+
+          Text(
+            'No AI Recommendation Yet',
+            textAlign: TextAlign.center,
+            style:
+                GoogleFonts.fraunces(
+              color: _Palette.brown,
+              fontSize: 21,
+              fontWeight:
+                  FontWeight.w700,
+            ),
+          ),
+
+          const SizedBox(
+            height: 8,
+          ),
+
+          Text(
+            'Generate a recommendation using your '
+            'pet’s feeding history and current schedule.',
+            textAlign: TextAlign.center,
+            style:
+                GoogleFonts.dmSans(
+              color: _Palette.muted,
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+
+          const SizedBox(
+            height: 20,
+          ),
+
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton.icon(
+              onPressed:
+                  generating
+                      ? null
+                      : generateRecommendation,
+              style:
+                  ElevatedButton.styleFrom(
+                backgroundColor:
+                    _Palette.salmon,
+                foregroundColor:
+                    Colors.white,
+                elevation: 0,
+                shape:
+                    RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(
+                    18,
+                  ),
+                ),
+              ),
+              icon: generating
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child:
+                          CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color:
+                            Colors.white,
+                      ),
+                    )
+                  : const Icon(
+                      Icons.auto_awesome,
+                    ),
+              label: Text(
+                generating
+                    ? 'Generating...'
+                    : 'Generate Recommendation',
+                style:
+                    GoogleFonts.dmSans(
+                  fontWeight:
+                      FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // RECOMMENDATION
+  // ============================================================
 
   Widget _buildRecommendation() {
     final r = recommendation!;
@@ -270,21 +720,27 @@ class _AIRecommendationPageState
           icon: Icons.wb_sunny,
           title: 'Morning Feeding',
           value:
-              '${_formatTime(r.morningTime)} • ${_capitalize(r.morningPortion)}',
+              '${_formatTime(r.morningTime)} • '
+              '${_capitalize(r.morningPortion)}',
           color: _Palette.amber,
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(
+          height: 12,
+        ),
 
         _recommendationCard(
           icon: Icons.nightlight_round,
           title: 'Evening Feeding',
           value:
-              '${_formatTime(r.eveningTime)} • ${_capitalize(r.eveningPortion)}',
+              '${_formatTime(r.eveningTime)} • '
+              '${_capitalize(r.eveningPortion)}',
           color: _Palette.salmon,
         ),
 
-        const SizedBox(height: 20),
+        const SizedBox(
+          height: 20,
+        ),
 
         _textCard(
           'Why this recommendation?',
@@ -292,7 +748,9 @@ class _AIRecommendationPageState
           Icons.psychology,
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(
+          height: 12,
+        ),
 
         _textCard(
           'Food Efficiency',
@@ -300,7 +758,9 @@ class _AIRecommendationPageState
           Icons.restaurant,
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(
+          height: 12,
+        ),
 
         _textCard(
           'Behavior Adjustment',
@@ -308,76 +768,140 @@ class _AIRecommendationPageState
           Icons.pets,
         ),
 
-        const SizedBox(height: 24),
+        const SizedBox(
+          height: 24,
+        ),
+
+        // ------------------------------------------------------
+        // APPLY
+        // ------------------------------------------------------
 
         SizedBox(
           width: double.infinity,
           height: 56,
           child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [_Palette.salmon, _Palette.peach],
+            decoration:
+                BoxDecoration(
+              borderRadius:
+                  BorderRadius.circular(20),
+              gradient:
+                  const LinearGradient(
+                begin:
+                    Alignment.topLeft,
+                end:
+                    Alignment.bottomRight,
+                colors: [
+                  _Palette.salmon,
+                  _Palette.peach,
+                ],
               ),
               boxShadow: [
                 BoxShadow(
-                  color: _Palette.salmon.withOpacity(0.35),
+                  color: _Palette.salmon
+                      .withOpacity(0.35),
                   blurRadius: 14,
-                  offset: const Offset(0, 6),
+                  offset:
+                      const Offset(0, 6),
                 ),
               ],
             ),
-            child: ElevatedButton.icon(
-              onPressed: () {
-                _showApplyDialog();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                shadowColor: Colors.transparent,
-                foregroundColor: Colors.white,
+            child:
+                ElevatedButton.icon(
+              onPressed:
+                  generating
+                      ? null
+                      : _showApplyDialog,
+              style:
+                  ElevatedButton.styleFrom(
+                backgroundColor:
+                    Colors.transparent,
+                shadowColor:
+                    Colors.transparent,
+                foregroundColor:
+                    Colors.white,
                 elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
+                shape:
+                    RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(
+                    20,
+                  ),
                 ),
               ),
-              icon: const Icon(Icons.check),
+              icon: const Icon(
+                Icons.check,
+              ),
               label: Text(
                 'Apply Recommendation',
-                style: GoogleFonts.dmSans(
+                style:
+                    GoogleFonts.dmSans(
                   fontSize: 16,
-                  fontWeight: FontWeight.w800,
+                  fontWeight:
+                      FontWeight.w800,
                 ),
               ),
             ),
           ),
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(
+          height: 12,
+        ),
+
+        // ------------------------------------------------------
+        // GENERATE AGAIN
+        // ------------------------------------------------------
 
         SizedBox(
           width: double.infinity,
           height: 52,
-          child: OutlinedButton.icon(
-            onPressed: loading
-                ? null
-                : generateRecommendation,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _Palette.salmon,
-              backgroundColor: Colors.white.withOpacity(0.6),
+          child:
+              OutlinedButton.icon(
+            onPressed:
+                generating
+                    ? null
+                    : generateRecommendation,
+            style:
+                OutlinedButton.styleFrom(
+              foregroundColor:
+                  _Palette.salmon,
+              backgroundColor:
+                  Colors.white
+                      .withOpacity(0.6),
               side: BorderSide(
-                color: _Palette.salmon.withOpacity(0.5),
+                color: _Palette.salmon
+                    .withOpacity(0.5),
               ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+              shape:
+                  RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.circular(
+                  20,
+                ),
               ),
             ),
-            icon: const Icon(Icons.refresh),
+            icon: generating
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child:
+                        CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color:
+                          _Palette.salmon,
+                    ),
+                  )
+                : const Icon(
+                    Icons.refresh,
+                  ),
             label: Text(
-              'Generate Again',
-              style: GoogleFonts.dmSans(
-                fontWeight: FontWeight.w700,
+              generating
+                  ? 'Generating...'
+                  : 'Generate Again',
+              style:
+                  GoogleFonts.dmSans(
+                fontWeight:
+                    FontWeight.w700,
               ),
             ),
           ),
@@ -386,6 +910,10 @@ class _AIRecommendationPageState
     );
   }
 
+  // ============================================================
+  // RECOMMENDATION CARD
+  // ============================================================
+
   Widget _recommendationCard({
     required IconData icon,
     required String title,
@@ -393,35 +921,48 @@ class _AIRecommendationPageState
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding:
+          const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.92),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: Colors.white
+            .withOpacity(0.82),
+        borderRadius:
+            BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-            color: _Palette.brownSoft.withOpacity(0.1),
+            color: Colors.black
+                .withOpacity(0.05),
+            blurRadius: 10,
+            offset:
+                const Offset(0, 4),
           ),
         ],
       ),
       child: Row(
         children: [
           Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [color, color.withOpacity(0.7)],
+            width: 48,
+            height: 48,
+            decoration:
+                BoxDecoration(
+              color:
+                  color.withOpacity(0.15),
+              borderRadius:
+                  BorderRadius.circular(
+                14,
               ),
-              borderRadius: BorderRadius.circular(16),
             ),
-            child: Icon(icon, color: Colors.white),
+            child: Icon(
+              icon,
+              color: color,
+              size: 25,
+            ),
           ),
-          const SizedBox(width: 15),
+
+          const SizedBox(
+            width: 14,
+          ),
+
           Expanded(
             child: Column(
               crossAxisAlignment:
@@ -429,19 +970,29 @@ class _AIRecommendationPageState
               children: [
                 Text(
                   title,
-                  style: GoogleFonts.dmSans(
-                    fontWeight: FontWeight.w700,
+                  style:
+                      GoogleFonts.dmSans(
+                    color:
+                        _Palette.muted,
                     fontSize: 13,
-                    color: _Palette.brownSoft.withOpacity(0.7),
+                    fontWeight:
+                        FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 4),
+
+                const SizedBox(
+                  height: 4,
+                ),
+
                 Text(
                   value,
-                  style: GoogleFonts.fraunces(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: _Palette.brown,
+                  style:
+                      GoogleFonts.fraunces(
+                    color:
+                        _Palette.brown,
+                    fontSize: 20,
+                    fontWeight:
+                        FontWeight.w700,
                   ),
                 ),
               ],
@@ -451,6 +1002,10 @@ class _AIRecommendationPageState
       ),
     );
   }
+
+  // ============================================================
+  // TEXT CARD
+  // ============================================================
 
   Widget _textCard(
     String title,
@@ -458,32 +1013,41 @@ class _AIRecommendationPageState
     IconData icon,
   ) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding:
+          const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.85),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 12,
-            offset: const Offset(0, 5),
-            color: _Palette.brownSoft.withOpacity(0.08),
-          ),
-        ],
+        color: Colors.white
+            .withOpacity(0.72),
+        borderRadius:
+            BorderRadius.circular(20),
       ),
       child: Row(
         crossAxisAlignment:
             CrossAxisAlignment.start,
         children: [
           Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: _Palette.blush.withOpacity(0.6),
-              borderRadius: BorderRadius.circular(12),
+            width: 42,
+            height: 42,
+            decoration:
+                BoxDecoration(
+              color: _Palette.blush,
+              borderRadius:
+                  BorderRadius.circular(
+                13,
+              ),
             ),
-            child: Icon(icon, size: 19, color: _Palette.salmon),
+            child: Icon(
+              icon,
+              color:
+                  _Palette.brownSoft,
+              size: 21,
+            ),
           ),
-          const SizedBox(width: 12),
+
+          const SizedBox(
+            width: 14,
+          ),
+
           Expanded(
             child: Column(
               crossAxisAlignment:
@@ -491,19 +1055,28 @@ class _AIRecommendationPageState
               children: [
                 Text(
                   title,
-                  style: GoogleFonts.fraunces(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                    color: _Palette.brown,
+                  style:
+                      GoogleFonts.dmSans(
+                    color:
+                        _Palette.brown,
+                    fontSize: 15,
+                    fontWeight:
+                        FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 6),
+
+                const SizedBox(
+                  height: 6,
+                ),
+
                 Text(
                   text,
-                  style: GoogleFonts.dmSans(
+                  style:
+                      GoogleFonts.dmSans(
+                    color:
+                        _Palette.brownSoft,
+                    fontSize: 14,
                     height: 1.45,
-                    fontSize: 13.5,
-                    color: _Palette.brownSoft.withOpacity(0.85),
                   ),
                 ),
               ],
@@ -514,127 +1087,256 @@ class _AIRecommendationPageState
     );
   }
 
+  // ============================================================
+  // ERROR
+  // ============================================================
+
   Widget _buildError() {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding:
+          const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.9),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.red.withOpacity(0.25)),
+        color: Colors.white
+            .withOpacity(0.8),
+        borderRadius:
+            BorderRadius.circular(20),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
         children: [
-          Icon(
+          const Icon(
             Icons.error_outline,
-            color: Colors.red.shade400,
-            size: 22,
+            color: _Palette.salmon,
+            size: 42,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              errorMessage!,
-              style: GoogleFonts.dmSans(
-                color: Colors.red.shade800,
-                height: 1.4,
-              ),
+
+          const SizedBox(
+            height: 12,
+          ),
+
+          Text(
+            'Something went wrong',
+            style:
+                GoogleFonts.dmSans(
+              color:
+                  _Palette.brown,
+              fontSize: 17,
+              fontWeight:
+                  FontWeight.w800,
             ),
+          ),
+
+          const SizedBox(
+            height: 8,
+          ),
+
+          Text(
+            errorMessage ?? 'Unknown error',
+            textAlign:
+                TextAlign.center,
+            style:
+                GoogleFonts.dmSans(
+              color:
+                  _Palette.muted,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+
+          const SizedBox(
+            height: 16,
+          ),
+
+          ElevatedButton(
+            onPressed:
+                loadSavedRecommendation,
+            style:
+                ElevatedButton.styleFrom(
+              backgroundColor:
+                  _Palette.salmon,
+              foregroundColor:
+                  Colors.white,
+            ),
+            child:
+                const Text('Try Again'),
           ),
         ],
       ),
     );
   }
 
-  String _capitalize(String text) {
-    if (text.isEmpty) return text;
-
-    return text[0].toUpperCase() +
-        text.substring(1).toLowerCase();
-  }
-
-  String _formatTime(String time) {
-    final parts = time.split(':');
-
-    if (parts.length < 2) {
-      return time;
-    }
-
-    int hour = int.tryParse(parts[0]) ?? 0;
-    final minute = parts[1];
-
-    final period =
-        hour >= 12 ? 'PM' : 'AM';
-
-    hour = hour % 12;
-
-    if (hour == 0) {
-      hour = 12;
-    }
-
-    return '$hour:$minute $period';
-  }
+  // ============================================================
+  // APPLY DIALOG
+  // ============================================================
 
   void _showApplyDialog() {
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: const Color(0xFFFFFDF9),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
+          backgroundColor:
+              _Palette.cream,
+          shape:
+              RoundedRectangleBorder(
+            borderRadius:
+                BorderRadius.circular(
+              24,
+            ),
           ),
           title: Text(
-            'Apply AI Recommendation?',
-            style: GoogleFonts.fraunces(
-              fontWeight: FontWeight.w700,
-              color: _Palette.brownSoft,
+            'Apply Recommendation?',
+            style:
+                GoogleFonts.fraunces(
+              color:
+                  _Palette.brown,
+              fontSize: 21,
+              fontWeight:
+                  FontWeight.w700,
             ),
           ),
           content: Text(
             'This will update your feeding schedule '
             'using the recommended feeding times and portions.',
-            style: GoogleFonts.dmSans(
-              color: _Palette.brownSoft.withOpacity(0.8),
+            style:
+                GoogleFonts.dmSans(
+              color:
+                  _Palette.brownSoft,
+              fontSize: 14,
+              height: 1.4,
             ),
           ),
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(context);
-              },
-              child: Text(
-                'Cancel',
-                style: GoogleFonts.dmSans(color: _Palette.muted),
-              ),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: _Palette.salmon,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-              onPressed: () {
-                Navigator.pop(context);
-
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Recommendation ready to apply.',
-                    ),
-                  ),
+                Navigator.pop(
+                  dialogContext,
                 );
               },
               child: Text(
+                'Cancel',
+                style:
+                    GoogleFonts.dmSans(
+                  color:
+                      _Palette.muted,
+                  fontWeight:
+                      FontWeight.w700,
+                ),
+              ),
+            ),
+
+            FilledButton(
+              style:
+                  FilledButton.styleFrom(
+                backgroundColor:
+                    _Palette.salmon,
+                foregroundColor:
+                    Colors.white,
+              ),
+              onPressed: () async {
+                Navigator.pop(
+                  dialogContext,
+                );
+
+                setState(() {
+                  generating = true;
+                });
+
+                try {
+                  await _applyRecommendation();
+
+                  if (!mounted) return;
+
+                  setState(() {
+                    generating = false;
+                  });
+
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'AI recommendation applied successfully!',
+                      ),
+                      behavior:
+                          SnackBarBehavior
+                              .floating,
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+
+                  setState(() {
+                    generating = false;
+                  });
+
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Failed to apply recommendation: $e',
+                      ),
+                      behavior:
+                          SnackBarBehavior
+                              .floating,
+                    ),
+                  );
+                }
+              },
+              child: Text(
                 'Apply',
-                style: GoogleFonts.dmSans(fontWeight: FontWeight.w700),
+                style:
+                    GoogleFonts.dmSans(
+                  fontWeight:
+                      FontWeight.w800,
+                ),
               ),
             ),
           ],
         );
       },
     );
+  }
+
+  // ============================================================
+  // HELPERS
+  // ============================================================
+
+  String _capitalize(String text) {
+    if (text.isEmpty) {
+      return text;
+    }
+
+    return text[0].toUpperCase() +
+        text.substring(1).toLowerCase();
+  }
+
+  String _formatTime(String time) {
+    try {
+      final parts = time.split(':');
+
+      if (parts.length < 2) {
+        return time;
+      }
+
+      final hour =
+          int.parse(parts[0]);
+
+      final minute =
+          int.parse(parts[1]);
+
+      final period =
+          hour >= 12 ? 'PM' : 'AM';
+
+      final displayHour =
+          hour % 12 == 0
+              ? 12
+              : hour % 12;
+
+      return '$displayHour:'
+          '${minute.toString().padLeft(2, '0')} '
+          '$period';
+    } catch (_) {
+      return time;
+    }
   }
 }
