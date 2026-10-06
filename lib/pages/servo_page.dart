@@ -129,7 +129,6 @@ class _ServoPageState extends State<ServoPage>
   static const Color _brownSoft = Color(0xFF7A3E2A);
   static const Color _leafGreen = Color(0xFF6FAE7C);
   static const Color _amber = Color(0xFFE0A438);
-  static const Color _mint = Color(0xFFB8E0D2);
 
 
   // =========================

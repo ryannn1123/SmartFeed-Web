@@ -15,8 +15,6 @@ class _Palette {
   static const Color brown = Color(0xFF5B3A29);
   static const Color brownSoft = Color(0xFF7A3E2A);
   static const Color muted = Color(0xFFAD8A79);
-  static const Color mint = Color(0xFFB8E0D2);
-  static const Color sky = Color(0xFFBFD7EA);
   static const Color honey = Color(0xFFF4B860);
 }
 
