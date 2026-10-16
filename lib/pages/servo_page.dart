@@ -1,43 +1,33 @@
-// This file-level directive tells Dart to ignore warnings about unused
-// private elements/functions in this file.
+
 // ignore_for_file: unused_element
 
-// Provides asynchronous programming features such as Future, Timer, etc.
 import 'dart:async';
-
-// Provides JSON encoding and decoding functionality.
 import 'dart:convert';
 
-// Provides Flutter's Material Design widgets and UI framework.
 import 'package:flutter/material.dart';
-
-// Provides custom fonts used throughout the page.
 import 'package:google_fonts/google_fonts.dart';
-
-// Provides HTTP networking functionality for communicating with
-// the Python/Flask pet detection server.
 import 'package:http/http.dart' as http;
-
-// Provides the MJPEG video widget used to display the live camera stream.
 import 'package:mjpeg_view/mjpeg_view.dart';
 
-// Imports the main.dart file so this page can access the global
-// Supabase client named "supabase".
 import '../main.dart';
-
+import '../server_config.dart';
 
 // ============================================================
 // SERVO PAGE
 // ============================================================
-// This is the main page for controlling the SmartFeed feeder.
+// SmartFeed main feeder control page.
 //
-// It provides:
+// Features:
 // 1. Live camera viewing
-// 2. Pet detection information
+// 2. Pet detection
 // 3. Feeding portion selection
 // 4. Manual feeding
-// 5. Feeder door OPEN/CLOSE controls
+// 5. Feeder Bowl OPEN/CLOSE controls
 // 6. Feeding/detection status
+//
+// NEW:
+// FEED NOW is disabled when the Feeder Bowl is closed,
+// opening, closing, or its state is unknown.
 // ============================================================
 
 class ServoPage extends StatefulWidget {
@@ -47,11 +37,6 @@ class ServoPage extends StatefulWidget {
   State<ServoPage> createState() => _ServoPageState();
 }
 
-
-// ============================================================
-// SERVO PAGE STATE
-// ============================================================
-
 class _ServoPageState extends State<ServoPage>
     with TickerProviderStateMixin {
 
@@ -59,53 +44,39 @@ class _ServoPageState extends State<ServoPage>
   // FEEDING
   // =========================
 
-  // Message displayed in the status card.
   String _status = 'Select portion & tap Feed Now';
 
-  // True while the feeder is dispensing food.
   bool _isFeeding = false;
 
-  // Currently selected portion: "small", "medium" or "full".
   String _selectedPortion = 'medium';
 
-
   // =========================
-  // FEEDER DOOR (SERVO 2)
+  // FEEDER BOWL
   // =========================
 
-  // True while the feeder door is being opened.
   bool _isGateOpening = false;
-
-  // True while the feeder door is being closed.
   bool _isGateClosing = false;
 
-  // NEW: Current door state read from Supabase (feeder_door.command).
-  //
-  //   true  -> door is OPEN   (OPEN button disabled)
-  //   false -> door is CLOSED (CLOSE button disabled)
-  //   null  -> state not loaded yet (both buttons stay enabled)
-  //
-  // Because this comes from the database, it also updates when the
-  // Python pet-detection script opens the door automatically.
+  // true  = Feeder Bowl OPEN
+  // false = Feeder Bowl CLOSED
+  // null  = State not loaded yet
   bool? _isDoorOpen;
 
-  // NEW: Realtime subscription that listens for door changes.
   StreamSubscription<List<Map<String, dynamic>>>? _doorSub;
-
 
   // =========================
   // PET DETECTION
   // =========================
 
-  // Name/status returned by the pet detection server.
   String _petDetection = 'No Pet Detected';
 
-  // Confidence score from the pet detection server (0.0 - 1.0).
   double _petConfidence = 0.0;
 
-  // Timer used to repeatedly request pet detection results.
   Timer? _detectionTimer;
 
+  String? _videoUrl;
+
+  int _detectionFailures = 0;
 
   // =========================
   // ANIMATION
@@ -113,9 +84,9 @@ class _ServoPageState extends State<ServoPage>
 
   late AnimationController _pawController;
   late Animation<double> _pawAnimation;
+
   late AnimationController _pulseController;
   late AnimationController _shimmerController;
-
 
   // =========================
   // PALETTE
@@ -130,10 +101,27 @@ class _ServoPageState extends State<ServoPage>
   static const Color _leafGreen = Color(0xFF6FAE7C);
   static const Color _amber = Color(0xFFE0A438);
 
+  // =========================
+  // NEW: FEED BUTTON STATE
+  // =========================
+
+  // Feeding is only allowed when:
+  // 1. Feeder Bowl is OPEN
+  // 2. No feeding is running
+  // 3. Bowl is not opening
+  // 4. Bowl is not closing
+
+  bool get _canFeed {
+    return _isDoorOpen == true &&
+        !_isFeeding &&
+        !_isGateOpening &&
+        !_isGateClosing;
+  }
 
   // =========================
   // INIT
   // =========================
+
   @override
   void initState() {
     super.initState();
@@ -143,8 +131,14 @@ class _ServoPageState extends State<ServoPage>
       vsync: this,
     );
 
-    _pawAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _pawController, curve: Curves.easeOutBack),
+    _pawAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(
+      CurvedAnimation(
+        parent: _pawController,
+        curve: Curves.easeOutBack,
+      ),
     );
 
     _pulseController = AnimationController(
@@ -157,25 +151,22 @@ class _ServoPageState extends State<ServoPage>
       vsync: this,
     )..repeat();
 
-    // Starts repeatedly checking the pet detection server.
-    _startDetectionPolling();
+    _initServer();
 
-    // NEW: Starts listening to the feeder door state in Supabase.
     _listenDoorState();
   }
 
+  // =========================
+  // DOOR STATE LISTENER
+  // =========================
 
-  // =========================
-  // NEW: DOOR STATE LISTENER
-  // =========================
-  // Subscribes to the feeder_door row (id = 1) using Supabase Realtime.
+  // Listens to Supabase feeder_door table.
   //
-  // Whenever the "command" column changes (from this app, from the
-  // Python script, or from anywhere else), the UI updates and the
-  // correct button is enabled/disabled.
+  // Whenever the command changes, the UI updates.
   //
-  // NOTE: Realtime must be enabled for the "feeder_door" table in the
-  // Supabase dashboard, otherwise only the initial value is received.
+  // This also supports changes made by the Python
+  // pet detection server.
+
   void _listenDoorState() {
     _doorSub = supabase
         .from('feeder_door')
@@ -185,70 +176,125 @@ class _ServoPageState extends State<ServoPage>
       (rows) {
         if (rows.isEmpty || !mounted) return;
 
-        // Reads the command and normalizes it so "OPEN", "Open"
-        // and "open" are all treated the same.
-        final cmd = rows.first['command']?.toString().toLowerCase().trim();
+        final cmd = rows.first['command']
+            ?.toString()
+            .toLowerCase()
+            .trim();
 
-        // Only "open" and "close" change the door state.
-        // Any other value (e.g. "idle") keeps the last known state.
         if (cmd == 'open') {
-          setState(() => _isDoorOpen = true);
+          setState(() {
+            _isDoorOpen = true;
+          });
         } else if (cmd == 'close') {
-          setState(() => _isDoorOpen = false);
+          setState(() {
+            _isDoorOpen = false;
+          });
         }
       },
-      onError: (_) {
-        // Ignore stream errors so the page does not crash if the
-        // connection drops. The stream reconnects automatically.
+      onError: (error) {
+        debugPrint('Door state error: $error');
       },
     );
   }
 
+  // =========================
+  // PET DETECTION SERVER
+  // =========================
+
+  Future<void> _initServer() async {
+    await ServerConfig.refresh();
+
+    if (!mounted) return;
+
+    setState(() {
+      _videoUrl = ServerConfig.isReady
+          ? ServerConfig.videoUrl
+          : null;
+    });
+
+    _startDetectionPolling();
+  }
+
+  Future<void> _reloadServer() async {
+    await ServerConfig.refresh();
+
+    if (!mounted) return;
+
+    final url = ServerConfig.isReady
+        ? ServerConfig.videoUrl
+        : null;
+
+    if (url != _videoUrl) {
+      setState(() {
+        _videoUrl = url;
+      });
+    }
+  }
 
   // =========================
-  // PET DETECTION POLLING
+  // DETECTION POLLING
   // =========================
-  // Asks the Python/Flask server for the latest detection result
-  // once every second.
+
   void _startDetectionPolling() {
     _detectionTimer = Timer.periodic(
       const Duration(seconds: 1),
       (_) async {
+        if (!ServerConfig.isReady) {
+          await _reloadServer();
+          return;
+        }
+
         try {
           final response = await http
-              .get(Uri.parse('http://192.168.1.13:5000/detection'))
-              .timeout(const Duration(seconds: 3));
+              .get(
+                Uri.parse(ServerConfig.detectionUrl),
+              )
+              .timeout(
+                const Duration(seconds: 3),
+              );
 
           if (response.statusCode == 200) {
+            _detectionFailures = 0;
+
             final data = jsonDecode(response.body);
 
             if (!mounted) return;
 
             setState(() {
-              _petDetection = data['pet'] ?? 'No Pet Detected';
-              _petConfidence = (data['confidence'] ?? 0.0).toDouble();
+              _petDetection =
+                  data['pet'] ?? 'No Pet Detected';
+
+              _petConfidence =
+                  (data['confidence'] ?? 0.0).toDouble();
             });
           }
         } catch (e) {
-          // Detection server may be offline - ignore on purpose so the
-          // page does not crash.
+          _detectionFailures++;
+
+          if (_detectionFailures >= 3) {
+            _detectionFailures = 0;
+            await _reloadServer();
+          }
         }
       },
     );
   }
 
-
   // =========================
   // PORTION INFORMATION
   // =========================
+
   String _getPortionLabel(String portion) {
     switch (portion) {
       case 'small':
         return 'Small';
+
       case 'medium':
         return 'Medium';
+
       case 'full':
         return 'Full';
+
       default:
         return 'Unknown';
     }
@@ -258,84 +304,106 @@ class _ServoPageState extends State<ServoPage>
     switch (portion) {
       case 'small':
         return const Duration(milliseconds: 500);
+
       case 'medium':
         return const Duration(seconds: 1);
+
       case 'full':
         return const Duration(seconds: 2);
+
       default:
         return const Duration(seconds: 1);
     }
   }
 
-
   // =========================
   // FEED NOW
   // =========================
+
   Future<void> feedNow() async {
-    // Prevents another feeding while one is already running.
-    if (_isFeeding) return;
+
+    // NEW:
+    // Prevent feeding if the Feeder Bowl is CLOSED.
+    // Also prevents feeding during other operations.
+
+    if (!_canFeed) {
+      return;
+    }
 
     final String portion = _selectedPortion;
-    final String portionLabel = _getPortionLabel(portion);
+
+    final String portionLabel =
+        _getPortionLabel(portion);
 
     setState(() {
       _isFeeding = true;
-      _status = "🍖 Dispensing ($portionLabel)...";
+
+      _status =
+          '🍖 Dispensing ($portionLabel)...';
     });
 
     try {
-      // Updates the "servo" row so the ESP32 starts dispensing.
+
+      // Send feeding command to ESP32.
+
       await supabase.from('servo').update({
         'angle': 45,
         'command': portion,
         'last_confirmed': 0,
       }).eq('id', 27);
 
-      // Saves the feeding in the history table.
+      // Save feeding history.
+
       await supabase.from('feeding_logs').insert({
         'angle': 45,
         'portion_label': portionLabel,
         'trigger_type': 'manual',
-        'fed_at': DateTime.now().toUtc().toIso8601String(),
+        'fed_at':
+            DateTime.now().toUtc().toIso8601String(),
       });
 
       _pawController.forward(from: 0);
 
-      final feedingDuration = _getFeedingDuration(portion);
+      final feedingDuration =
+          _getFeedingDuration(portion);
 
       await Future.delayed(
-        feedingDuration + const Duration(milliseconds: 800),
+        feedingDuration +
+            const Duration(milliseconds: 800),
       );
 
       if (!mounted) return;
 
       setState(() {
-        _status = '✓ Fed successfully! ($portionLabel Portion)';
+        _status =
+            '✓ Fed successfully! ($portionLabel Portion)';
       });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        _status = "❌ Error: $e";
+        _status = '❌ Error: $e';
       });
     } finally {
       if (mounted) {
-        setState(() => _isFeeding = false);
+        setState(() {
+          _isFeeding = false;
+        });
       }
     }
   }
 
+  // =========================
+  // OPEN FEEDER BOWL
+  // =========================
 
-  // =========================
-  // FEEDER DOOR - OPEN
-  // =========================
-  // The app does not move the servo directly. It updates the
-  // "command" in Supabase and the ESP32 moves the servo.
   Future<void> openGate() async {
-    // Prevents conflicting door operations.
-    if (_isGateOpening || _isGateClosing) return;
+    if (_isGateOpening ||
+        _isGateClosing ||
+        _isFeeding) {
+      return;
+    }
 
-    // NEW: Extra safety - do nothing if the door is already open.
     if (_isDoorOpen == true) return;
 
     setState(() {
@@ -346,34 +414,43 @@ class _ServoPageState extends State<ServoPage>
     try {
       await supabase
           .from('feeder_door')
-          .update({'command': 'open'})
+          .update({
+            'command': 'open',
+          })
           .eq('id', 1);
 
       if (!mounted) return;
 
       setState(() {
-        // NEW: Update immediately so the OPEN button disables right
-        // away, without waiting for the realtime event.
         _isDoorOpen = true;
         _status = '✓ Feeder opened';
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _status = '❌ Feeder error: $e');
+
+      setState(() {
+        _status = '❌ Feeder error: $e';
+      });
     } finally {
-      if (mounted) setState(() => _isGateOpening = false);
+      if (mounted) {
+        setState(() {
+          _isGateOpening = false;
+        });
+      }
     }
   }
 
+  // =========================
+  // CLOSE FEEDER BOWL
+  // =========================
 
-  // =========================
-  // FEEDER DOOR - CLOSE
-  // =========================
   Future<void> closeGate() async {
-    // Prevents conflicting door operations.
-    if (_isGateOpening || _isGateClosing) return;
+    if (_isGateOpening ||
+        _isGateClosing ||
+        _isFeeding) {
+      return;
+    }
 
-    // NEW: Extra safety - do nothing if the door is already closed.
     if (_isDoorOpen == false) return;
 
     setState(() {
@@ -384,35 +461,40 @@ class _ServoPageState extends State<ServoPage>
     try {
       await supabase
           .from('feeder_door')
-          .update({'command': 'close'})
+          .update({
+            'command': 'close',
+          })
           .eq('id', 1);
 
       if (!mounted) return;
 
       setState(() {
-        // NEW: Update immediately so the CLOSE button disables right
-        // away, without waiting for the realtime event.
         _isDoorOpen = false;
         _status = '✓ Feeder closed';
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _status = '❌ Feeder error: $e');
+
+      setState(() {
+        _status = '❌ Feeder error: $e';
+      });
     } finally {
-      if (mounted) setState(() => _isGateClosing = false);
+      if (mounted) {
+        setState(() {
+          _isGateClosing = false;
+        });
+      }
     }
   }
-
 
   // =========================
   // DISPOSE
   // =========================
+
   @override
   void dispose() {
-    // Stops the pet detection timer.
     _detectionTimer?.cancel();
 
-    // NEW: Stops listening to the door state.
     _doorSub?.cancel();
 
     _pawController.dispose();
@@ -422,20 +504,25 @@ class _ServoPageState extends State<ServoPage>
     super.dispose();
   }
 
-
   // =========================
   // BUILD
   // =========================
+
   @override
   Widget build(BuildContext context) {
-    // True while any major operation is running.
-    final busy = _isFeeding || _isGateOpening || _isGateClosing;
+    final busy =
+        _isFeeding ||
+        _isGateOpening ||
+        _isGateClosing;
 
     return Scaffold(
       body: Stack(
         children: [
 
-          // ---- BACKGROUND ----
+          // =========================
+          // BACKGROUND
+          // =========================
+
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -451,8 +538,10 @@ class _ServoPageState extends State<ServoPage>
             ),
           ),
 
+          // =========================
+          // SOFT BLOBS
+          // =========================
 
-          // ---- SOFT BLOBS ----
           Positioned(
             top: -60,
             right: -50,
@@ -489,98 +578,157 @@ class _ServoPageState extends State<ServoPage>
             ),
           ),
 
+          // =========================
+          // GHOST PAWS
+          // =========================
 
-          // ---- GHOST PAWS ----
           const Positioned(
             top: 80,
             left: -10,
-            child: _GhostPaw(size: 46, angle: -0.4),
+            child: _GhostPaw(
+              size: 46,
+              angle: -0.4,
+            ),
           ),
 
           const Positioned(
             top: 150,
             right: 6,
-            child: _GhostPaw(size: 30, angle: 0.5),
+            child: _GhostPaw(
+              size: 30,
+              angle: 0.5,
+            ),
           ),
 
           const Positioned(
             bottom: 100,
             left: 18,
-            child: _GhostPaw(size: 34, angle: 0.2),
+            child: _GhostPaw(
+              size: 34,
+              angle: 0.2,
+            ),
           ),
 
           const Positioned(
             bottom: 40,
             right: -6,
-            child: _GhostPaw(size: 50, angle: -0.3),
+            child: _GhostPaw(
+              size: 50,
+              angle: -0.3,
+            ),
           ),
 
+          // =========================
+          // PAGE CONTENT
+          // =========================
 
           SafeArea(
             child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+              physics:
+                  const BouncingScrollPhysics(),
+
+              padding: const EdgeInsets.fromLTRB(
+                20,
+                16,
+                20,
+                32,
+              ),
 
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+
                 children: [
 
                   // =========================
                   // LIVE CAMERA
                   // =========================
+
                   Stack(
                     children: [
 
                       Container(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(30),
+                          borderRadius:
+                              BorderRadius.circular(30),
+
                           border: Border.all(
                             color: Colors.white,
                             width: 4,
                           ),
+
                           boxShadow: [
                             BoxShadow(
-                              color: _brown.withOpacity(0.22),
+                              color:
+                                  _brown.withOpacity(0.22),
                               blurRadius: 22,
-                              offset: const Offset(0, 12),
+                              offset:
+                                  const Offset(0, 12),
                             ),
+
                             BoxShadow(
-                              color: _salmon.withOpacity(0.15),
+                              color:
+                                  _salmon.withOpacity(0.15),
                               blurRadius: 30,
-                              offset: const Offset(0, 6),
+                              offset:
+                                  const Offset(0, 6),
                             ),
                           ],
                         ),
 
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(26),
+                          borderRadius:
+                              BorderRadius.circular(26),
 
                           child: Stack(
                             children: [
 
-                              // MJPEG live stream from the Flask server.
-                              MjpegView(
-                                uri: 'http://192.168.1.13:5000/video',
-                                width: double.infinity,
-                                height: 230,
-                                fit: BoxFit.cover,
-                              ),
+                              // MJPEG VIDEO
 
-                              // Dark gradient at the bottom so overlay
-                              // information is easier to see.
+                              if (_videoUrl == null)
+                                Container(
+                                  width: double.infinity,
+                                  height: 230,
+                                  color: Colors.black87,
+
+                                  child: const Center(
+                                    child:
+                                        CircularProgressIndicator(
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                )
+                              else
+                                MjpegView(
+                                  key: ValueKey(_videoUrl),
+                                  uri: _videoUrl!,
+                                  width: double.infinity,
+                                  height: 230,
+                                  fit: BoxFit.cover,
+                                ),
+
+                              // VIDEO GRADIENT
+
                               Positioned(
                                 left: 0,
                                 right: 0,
                                 bottom: 0,
+
                                 child: Container(
                                   height: 70,
+
                                   decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
+                                    gradient:
+                                        LinearGradient(
+                                      begin:
+                                          Alignment.topCenter,
+                                      end:
+                                          Alignment.bottomCenter,
+
                                       colors: [
                                         Colors.transparent,
-                                        Colors.black.withOpacity(0.45),
+                                        Colors.black
+                                            .withOpacity(0.45),
                                       ],
                                     ),
                                   ),
@@ -591,48 +739,71 @@ class _ServoPageState extends State<ServoPage>
                         ),
                       ),
 
+                      // =========================
+                      // LIVE BADGE
+                      // =========================
 
-                      // "LIVE" badge
                       Positioned(
                         top: 14,
                         left: 14,
+
                         child: Container(
-                          padding: const EdgeInsets.symmetric(
+                          padding:
+                              const EdgeInsets.symmetric(
                             horizontal: 11,
                             vertical: 6,
                           ),
+
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
-                            borderRadius: BorderRadius.circular(20),
+                            color:
+                                Colors.black.withOpacity(0.6),
+
+                            borderRadius:
+                                BorderRadius.circular(20),
+
                             border: Border.all(
-                              color: Colors.white.withOpacity(0.2),
+                              color: Colors.white
+                                  .withOpacity(0.2),
                             ),
                           ),
 
                           child: Row(
-                            mainAxisSize: MainAxisSize.min,
+                            mainAxisSize:
+                                MainAxisSize.min,
+
                             children: [
 
-                              // Pulsing red dot.
                               AnimatedBuilder(
-                                animation: _pulseController,
+                                animation:
+                                    _pulseController,
+
                                 builder: (context, _) {
-                                  final t = _pulseController.value;
+                                  final t =
+                                      _pulseController.value;
 
                                   return Container(
                                     width: 8,
                                     height: 8,
+
                                     decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
+                                      shape:
+                                          BoxShape.circle,
+
                                       color: Color.lerp(
-                                        const Color(0xFFFF5C5C),
-                                        const Color(0xFFFFB4B4),
+                                        const Color(
+                                            0xFFFF5C5C),
+                                        const Color(
+                                            0xFFFFB4B4),
                                         t,
                                       ),
+
                                       boxShadow: [
                                         BoxShadow(
-                                          color: const Color(0xFFFF5C5C)
-                                              .withOpacity(0.6),
+                                          color:
+                                              const Color(
+                                            0xFFFF5C5C,
+                                          ).withOpacity(0.6),
+
                                           blurRadius: 8,
                                         ),
                                       ],
@@ -645,10 +816,12 @@ class _ServoPageState extends State<ServoPage>
 
                               Text(
                                 'LIVE',
+
                                 style: GoogleFonts.dmSans(
                                   color: Colors.white,
                                   fontSize: 11.5,
-                                  fontWeight: FontWeight.w800,
+                                  fontWeight:
+                                      FontWeight.w800,
                                   letterSpacing: 0.8,
                                 ),
                               ),
@@ -657,32 +830,45 @@ class _ServoPageState extends State<ServoPage>
                         ),
                       ),
 
+                      // =========================
+                      // DETECTION PILL
+                      // =========================
 
-                      // Detection pill overlay (bottom-left)
                       Positioned(
                         bottom: 14,
                         left: 14,
                         child: _buildDetectionPill(),
                       ),
 
+                      // =========================
+                      // PAW STICKER
+                      // =========================
 
-                      // Paw corner sticker
                       Positioned(
                         bottom: 14,
                         right: 14,
+
                         child: Container(
-                          padding: const EdgeInsets.all(8),
+                          padding:
+                              const EdgeInsets.all(8),
+
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.9),
+                            color: Colors.white
+                                .withOpacity(0.9),
+
                             shape: BoxShape.circle,
+
                             boxShadow: [
                               BoxShadow(
-                                color: _salmon.withOpacity(0.3),
+                                color: _salmon
+                                    .withOpacity(0.3),
                                 blurRadius: 10,
-                                offset: const Offset(0, 3),
+                                offset:
+                                    const Offset(0, 3),
                               ),
                             ],
                           ),
+
                           child: const Icon(
                             Icons.pets,
                             size: 16,
@@ -693,28 +879,36 @@ class _ServoPageState extends State<ServoPage>
                     ],
                   ),
 
+                  // =========================
+                  // CONFIDENCE BAR
+                  // =========================
 
-                  // Confidence bar (only shows if a pet is detected)
-                  if (_petDetection != 'No Pet Detected') ...[
+                  if (_petDetection !=
+                      'No Pet Detected') ...[
                     const SizedBox(height: 12),
                     _buildConfidenceBar(),
                   ],
 
-
                   const SizedBox(height: 22),
 
+                  // =========================
+                  // PORTION TITLE
+                  // =========================
 
-                  // =========================
-                  // PORTION SELECTORS
-                  // =========================
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(6),
+                        padding:
+                            const EdgeInsets.all(6),
+
                         decoration: BoxDecoration(
-                          color: _salmon.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(10),
+                          color:
+                              _salmon.withOpacity(0.15),
+
+                          borderRadius:
+                              BorderRadius.circular(10),
                         ),
+
                         child: const Icon(
                           Icons.restaurant_menu_rounded,
                           size: 14,
@@ -726,6 +920,7 @@ class _ServoPageState extends State<ServoPage>
 
                       Text(
                         'Choose a portion 🥣',
+
                         style: GoogleFonts.fraunces(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
@@ -736,12 +931,15 @@ class _ServoPageState extends State<ServoPage>
                     ],
                   ),
 
-
                   const SizedBox(height: 12),
 
+                  // =========================
+                  // PORTION BUTTONS
+                  // =========================
 
                   Row(
                     children: [
+
                       _buildPresetChip(
                         label: 'Small',
                         subtext: 'Portion',
@@ -769,50 +967,82 @@ class _ServoPageState extends State<ServoPage>
                     ],
                   ),
 
-
                   const SizedBox(height: 24),
 
+                  // =================================================
+                  // NEW: FEED NOW BUTTON WITH BOWL STATE VALIDATION
+                  // =================================================
 
-                  // =========================
-                  // FEED NOW BUTTON
-                  // =========================
                   SizedBox(
                     width: double.infinity,
                     height: 66,
 
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(26),
+                        borderRadius:
+                            BorderRadius.circular(26),
 
                         gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
-                          colors: _isFeeding
-                              ? [_blush, _blush]
-                              : [_salmon, _peach],
+
+                          // Gray when disabled.
+                          // Salmon when enabled.
+
+                          colors: !_canFeed
+                              ? [
+                                  Colors.grey.shade400,
+                                  Colors.grey.shade500,
+                                ]
+                              : [
+                                  _salmon,
+                                  _peach,
+                                ],
                         ),
 
-                        boxShadow: _isFeeding
+                        boxShadow: !_canFeed
                             ? []
                             : [
                                 BoxShadow(
-                                  color: _salmon.withOpacity(0.5),
+                                  color: _salmon
+                                      .withOpacity(0.5),
                                   blurRadius: 22,
-                                  offset: const Offset(0, 10),
+                                  offset:
+                                      const Offset(0, 10),
                                 ),
                               ],
                       ),
 
                       child: ElevatedButton.icon(
-                        onPressed: busy ? null : feedNow,
+
+                        // NEW:
+                        // FEED NOW only works when
+                        // Feeder Bowl is OPEN.
+
+                        onPressed:
+                            _canFeed ? feedNow : null,
 
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          foregroundColor: Colors.white,
+                          backgroundColor:
+                              Colors.transparent,
+
+                          disabledBackgroundColor:
+                              Colors.transparent,
+
+                          shadowColor:
+                              Colors.transparent,
+
+                          foregroundColor:
+                              Colors.white,
+
+                          disabledForegroundColor:
+                              Colors.white,
+
                           elevation: 0,
+
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(26),
+                            borderRadius:
+                                BorderRadius.circular(26),
                           ),
                         ),
 
@@ -820,30 +1050,58 @@ class _ServoPageState extends State<ServoPage>
                             ? const SizedBox(
                                 width: 22,
                                 height: 22,
-                                child: CircularProgressIndicator(
+
+                                child:
+                                    CircularProgressIndicator(
                                   strokeWidth: 2.6,
                                   color: Colors.white,
                                 ),
                               )
-                            : AnimatedBuilder(
-                                animation: _pawAnimation,
-                                builder: (context, _) {
-                                  return Transform.rotate(
-                                    angle: _pawAnimation.value * 0.35,
-                                    child: const Icon(
-                                      Icons.pets,
-                                      size: 28,
-                                      color: Colors.white,
-                                    ),
-                                  );
-                                },
-                              ),
+                            : !_canFeed
+                                ? const Icon(
+                                    Icons.lock_rounded,
+                                    size: 26,
+                                    color: Colors.white,
+                                  )
+                                : AnimatedBuilder(
+                                    animation:
+                                        _pawAnimation,
+
+                                    builder:
+                                        (context, _) {
+                                      return Transform.rotate(
+                                        angle:
+                                            _pawAnimation.value *
+                                                0.35,
+
+                                        child: const Icon(
+                                          Icons.pets,
+                                          size: 28,
+                                          color:
+                                              Colors.white,
+                                        ),
+                                      );
+                                    },
+                                  ),
 
                         label: Text(
-                          _isFeeding ? 'FEEDING...' : 'FEED NOW',
+
+                          // NEW:
+                          // Button label changes based
+                          // on feeder bowl state.
+
+                          _isFeeding
+                              ? 'FEEDING...'
+                              : _isDoorOpen != true
+                                  ? 'BOWL CLOSED'
+                                  : busy
+                                      ? 'PLEASE WAIT...'
+                                      : 'FEED NOW',
+
                           style: GoogleFonts.dmSans(
                             fontSize: 19,
-                            fontWeight: FontWeight.w800,
+                            fontWeight:
+                                FontWeight.w800,
                             letterSpacing: 1.2,
                             color: Colors.white,
                           ),
@@ -852,21 +1110,70 @@ class _ServoPageState extends State<ServoPage>
                     ),
                   ),
 
+                  // =========================
+                  // NEW: FEED BUTTON MESSAGE
+                  // =========================
+
+                  if (_isDoorOpen != true) ...[
+                    const SizedBox(height: 10),
+
+                    Center(
+                      child: Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.center,
+
+                        children: [
+                          const Icon(
+                            Icons.lock_outline_rounded,
+                            size: 16,
+                            color: _brownSoft,
+                          ),
+
+                          const SizedBox(width: 6),
+
+                          Flexible(
+                            child: Text(
+                              _isDoorOpen == null
+                                  ? 'Checking feeder bowl status...'
+                                  : 'Open the Feeder Bowl to enable feeding',
+
+                              textAlign:
+                                  TextAlign.center,
+
+                              style:
+                                  GoogleFonts.dmSans(
+                                fontSize: 12,
+                                fontWeight:
+                                    FontWeight.w600,
+                                color: _brownSoft,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
 
                   const SizedBox(height: 20),
 
+                  // =========================
+                  // FEEDER BOWL TITLE
+                  // =========================
 
-                  // =========================
-                  // DOOR CONTROLS
-                  // =========================
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(6),
+                        padding:
+                            const EdgeInsets.all(6),
+
                         decoration: BoxDecoration(
-                          color: _leafGreen.withOpacity(0.18),
-                          borderRadius: BorderRadius.circular(10),
+                          color: _leafGreen
+                              .withOpacity(0.18),
+
+                          borderRadius:
+                              BorderRadius.circular(10),
                         ),
+
                         child: const Icon(
                           Icons.door_sliding_rounded,
                           size: 14,
@@ -877,10 +1184,12 @@ class _ServoPageState extends State<ServoPage>
                       const SizedBox(width: 8),
 
                       Text(
-                        'Feeder Door',
+                        'Feeder Bowl',
+
                         style: GoogleFonts.fraunces(
                           fontSize: 16,
-                          fontWeight: FontWeight.w800,
+                          fontWeight:
+                              FontWeight.w800,
                           color: _brownSoft,
                           letterSpacing: -0.2,
                         ),
@@ -888,77 +1197,111 @@ class _ServoPageState extends State<ServoPage>
                     ],
                   ),
 
-
                   const SizedBox(height: 12),
 
+                  // =========================
+                  // OPEN / CLOSE BUTTONS
+                  // =========================
 
-                  // OPEN and CLOSE buttons side-by-side.
                   Row(
                     children: [
 
-                      // OPEN button.
-                      // NEW: disabled when the door is already OPEN.
+                      // OPEN BUTTON
+
                       Expanded(
                         child: _DoorButton(
                           isBusy: busy,
-                          isDisabled: _isDoorOpen == true,
-                          isWorking: _isGateOpening,
+                          isDisabled:
+                              _isDoorOpen == true,
+
+                          isWorking:
+                              _isGateOpening,
+
                           label: 'OPEN',
-                          workingLabel: 'OPENING...',
-                          icon: Icons.lock_open_rounded,
+                          workingLabel:
+                              'OPENING...',
+
+                          icon:
+                              Icons.lock_open_rounded,
+
                           color: _leafGreen,
+
                           onPressed: openGate,
                         ),
                       ),
 
                       const SizedBox(width: 12),
 
-                      // CLOSE button.
-                      // NEW: disabled when the door is already CLOSED.
+                      // CLOSE BUTTON
+
                       Expanded(
                         child: _DoorButton(
                           isBusy: busy,
-                          isDisabled: _isDoorOpen == false,
-                          isWorking: _isGateClosing,
+
+                          isDisabled:
+                              _isDoorOpen == false,
+
+                          isWorking:
+                              _isGateClosing,
+
                           label: 'CLOSE',
-                          workingLabel: 'CLOSING...',
-                          icon: Icons.lock_rounded,
-                          color: const Color(0xFFC23B3B),
+                          workingLabel:
+                              'CLOSING...',
+
+                          icon:
+                              Icons.lock_rounded,
+
+                          color:
+                              const Color(0xFFC23B3B),
+
                           onPressed: closeGate,
                         ),
                       ),
                     ],
                   ),
 
-
                   const SizedBox(height: 20),
-
 
                   // =========================
                   // STATUS CARD
                   // =========================
+
                   AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
+                    duration:
+                        const Duration(milliseconds: 300),
+
                     curve: Curves.easeOutCubic,
+
                     width: double.infinity,
 
-                    padding: const EdgeInsets.symmetric(
+                    padding:
+                        const EdgeInsets.symmetric(
                       vertical: 16,
                       horizontal: 18,
                     ),
 
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.75),
-                      borderRadius: BorderRadius.circular(20),
+                      color: Colors.white
+                          .withOpacity(0.75),
+
+                      borderRadius:
+                          BorderRadius.circular(20),
+
                       border: Border.all(
-                        color: Colors.white.withOpacity(0.9),
+                        color: Colors.white
+                            .withOpacity(0.9),
                         width: 1.2,
                       ),
+
                       boxShadow: [
                         BoxShadow(
-                          color: _brownSoft.withOpacity(0.08),
+                          color: _brownSoft
+                              .withOpacity(0.08),
+
                           blurRadius: 16,
-                          offset: const Offset(0, 6),
+
+                          offset:
+                              const Offset(0, 6),
                         ),
                       ],
                     ),
@@ -967,16 +1310,23 @@ class _ServoPageState extends State<ServoPage>
                       children: [
 
                         Container(
-                          padding: const EdgeInsets.all(8),
+                          padding:
+                              const EdgeInsets.all(8),
+
                           decoration: BoxDecoration(
-                            gradient: LinearGradient(
+                            gradient:
+                                LinearGradient(
                               colors: [
-                                _salmon.withOpacity(0.2),
-                                _peach.withOpacity(0.15),
+                                _salmon
+                                    .withOpacity(0.2),
+                                _peach
+                                    .withOpacity(0.15),
                               ],
                             ),
+
                             shape: BoxShape.circle,
                           ),
+
                           child: const Icon(
                             Icons.info_outline_rounded,
                             size: 16,
@@ -989,10 +1339,13 @@ class _ServoPageState extends State<ServoPage>
                         Expanded(
                           child: Text(
                             _status,
-                            style: GoogleFonts.dmSans(
+
+                            style:
+                                GoogleFonts.dmSans(
                               fontSize: 14,
                               color: _brownSoft,
-                              fontWeight: FontWeight.w700,
+                              fontWeight:
+                                  FontWeight.w700,
                               height: 1.35,
                             ),
                           ),
@@ -1009,11 +1362,10 @@ class _ServoPageState extends State<ServoPage>
     );
   }
 
-
   // =========================
   // DETECTION PILL
   // =========================
-  // Small status indicator shown on top of the camera.
+
   Widget _buildDetectionPill() {
     late final Color pillColor;
     late final Color dotColor;
@@ -1021,37 +1373,49 @@ class _ServoPageState extends State<ServoPage>
     late final IconData icon;
 
     if (_petDetection == 'Yuri') {
-      pillColor = _leafGreen.withOpacity(0.2);
+      pillColor =
+          _leafGreen.withOpacity(0.2);
       dotColor = _leafGreen;
       label = 'Yuri Detected';
       icon = Icons.pets;
+
     } else if (_petDetection == 'Unknown Pet') {
-      pillColor = _amber.withOpacity(0.22);
+      pillColor =
+          _amber.withOpacity(0.22);
       dotColor = _amber;
       label = 'Unknown Pet';
       icon = Icons.help_outline_rounded;
+
     } else {
-      pillColor = Colors.black.withOpacity(0.5);
+      pillColor =
+          Colors.black.withOpacity(0.5);
       dotColor = Colors.white70;
       label = 'No Pet Detected';
       icon = Icons.visibility_off_rounded;
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      padding: const EdgeInsets.symmetric(
+        vertical: 8,
+        horizontal: 12,
+      ),
 
       decoration: BoxDecoration(
-        color: _petDetection == 'No Pet Detected'
+        color: _petDetection ==
+                'No Pet Detected'
             ? pillColor
             : Colors.white.withOpacity(0.95),
 
-        borderRadius: BorderRadius.circular(30),
+        borderRadius:
+            BorderRadius.circular(30),
 
-        boxShadow: _petDetection == 'No Pet Detected'
+        boxShadow: _petDetection ==
+                'No Pet Detected'
             ? null
             : [
                 BoxShadow(
-                  color: dotColor.withOpacity(0.35),
+                  color:
+                      dotColor.withOpacity(0.35),
                   blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
@@ -1060,26 +1424,37 @@ class _ServoPageState extends State<ServoPage>
 
       child: Row(
         mainAxisSize: MainAxisSize.min,
+
         children: [
 
           Container(
             width: 18,
             height: 18,
+
             decoration: BoxDecoration(
-              color: dotColor.withOpacity(0.2),
+              color:
+                  dotColor.withOpacity(0.2),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, size: 11, color: dotColor),
+
+            child: Icon(
+              icon,
+              size: 11,
+              color: dotColor,
+            ),
           ),
 
           const SizedBox(width: 7),
 
           Text(
             label,
+
             style: GoogleFonts.dmSans(
               fontSize: 12.5,
               fontWeight: FontWeight.w800,
-              color: _petDetection == 'No Pet Detected'
+
+              color: _petDetection ==
+                      'No Pet Detected'
                   ? Colors.white
                   : _brownSoft,
             ),
@@ -1089,46 +1464,61 @@ class _ServoPageState extends State<ServoPage>
     );
   }
 
-
   // =========================
   // CONFIDENCE BAR
   // =========================
+
   Widget _buildConfidenceBar() {
-    // Keeps the value between 0.0 and 1.0.
-    final pct = _petConfidence.clamp(0.0, 1.0);
+    final pct =
+        _petConfidence.clamp(0.0, 1.0);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 12,
+      ),
 
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.75),
-        borderRadius: BorderRadius.circular(16),
+        color:
+            Colors.white.withOpacity(0.75),
+
+        borderRadius:
+            BorderRadius.circular(16),
+
         border: Border.all(
-          color: Colors.white.withOpacity(0.9),
+          color:
+              Colors.white.withOpacity(0.9),
           width: 1.2,
         ),
       ),
 
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+
         children: [
 
           Row(
             children: [
+
               Icon(
                 Icons.analytics_outlined,
                 size: 14,
-                color: _brownSoft.withOpacity(0.7),
+                color:
+                    _brownSoft.withOpacity(0.7),
               ),
 
               const SizedBox(width: 6),
 
               Text(
                 'Detection confidence',
+
                 style: GoogleFonts.dmSans(
                   fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  color: _brownSoft.withOpacity(0.8),
+                  fontWeight:
+                      FontWeight.w800,
+                  color:
+                      _brownSoft.withOpacity(0.8),
                 ),
               ),
 
@@ -1136,9 +1526,12 @@ class _ServoPageState extends State<ServoPage>
 
               Text(
                 '${(_petConfidence * 100).toStringAsFixed(1)}%',
-                style: GoogleFonts.fraunces(
+
+                style:
+                    GoogleFonts.fraunces(
                   fontSize: 14,
-                  fontWeight: FontWeight.w800,
+                  fontWeight:
+                      FontWeight.w800,
                   color: _salmon,
                 ),
               ),
@@ -1148,20 +1541,33 @@ class _ServoPageState extends State<ServoPage>
           const SizedBox(height: 8),
 
           ClipRRect(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius:
+                BorderRadius.circular(20),
 
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: pct),
-              duration: const Duration(milliseconds: 500),
+            child:
+                TweenAnimationBuilder<double>(
+              tween: Tween(
+                begin: 0,
+                end: pct,
+              ),
+
+              duration:
+                  const Duration(milliseconds: 500),
+
               curve: Curves.easeOutCubic,
 
               builder: (context, value, _) {
                 return LinearProgressIndicator(
                   value: value,
                   minHeight: 9,
-                  backgroundColor: _blush.withOpacity(0.5),
+
+                  backgroundColor:
+                      _blush.withOpacity(0.5),
+
                   valueColor:
-                      const AlwaysStoppedAnimation<Color>(_salmon),
+                      const AlwaysStoppedAnimation<Color>(
+                    _salmon,
+                  ),
                 );
               },
             ),
@@ -1171,38 +1577,45 @@ class _ServoPageState extends State<ServoPage>
     );
   }
 
+  // =========================
+  // PORTION SELECTORS
+  // =========================
 
-  // =========================
-  // PRESET PORTIONS
-  // =========================
-  // Creates one of the Small, Medium, or Full portion buttons.
   Widget _buildPresetChip({
     required String label,
     required String subtext,
     required String portion,
     required IconData icon,
   }) {
-    final isSelected = _selectedPortion == portion;
+    final isSelected =
+        _selectedPortion == portion;
 
     return Expanded(
       child: GestureDetector(
 
-        // Prevents changing the portion while feeding.
         onTap: _isFeeding
             ? null
             : () {
-                setState(() => _selectedPortion = portion);
+                setState(() {
+                  _selectedPortion = portion;
+                });
               },
 
         child: AnimatedScale(
-          scale: isSelected ? 1.05 : 1.0,
-          duration: const Duration(milliseconds: 220),
+          scale:
+              isSelected ? 1.05 : 1.0,
+
+          duration:
+              const Duration(milliseconds: 220),
+
           curve: Curves.easeOutBack,
 
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
+            duration:
+                const Duration(milliseconds: 220),
 
-            padding: const EdgeInsets.symmetric(
+            padding:
+                const EdgeInsets.symmetric(
               vertical: 16,
               horizontal: 10,
             ),
@@ -1212,13 +1625,19 @@ class _ServoPageState extends State<ServoPage>
                   ? const LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [_salmon, _peach],
+                      colors: [
+                        _salmon,
+                        _peach,
+                      ],
                     )
                   : null,
 
-              color: isSelected ? null : Colors.white.withOpacity(0.92),
+              color: isSelected
+                  ? null
+                  : Colors.white.withOpacity(0.92),
 
-              borderRadius: BorderRadius.circular(26),
+              borderRadius:
+                  BorderRadius.circular(26),
 
               border: Border.all(
                 color: isSelected
@@ -1230,16 +1649,20 @@ class _ServoPageState extends State<ServoPage>
               boxShadow: isSelected
                   ? [
                       BoxShadow(
-                        color: _salmon.withOpacity(0.4),
+                        color:
+                            _salmon.withOpacity(0.4),
                         blurRadius: 16,
-                        offset: const Offset(0, 8),
+                        offset:
+                            const Offset(0, 8),
                       ),
                     ]
                   : [
                       BoxShadow(
-                        color: _brownSoft.withOpacity(0.06),
+                        color:
+                            _brownSoft.withOpacity(0.06),
                         blurRadius: 8,
-                        offset: const Offset(0, 3),
+                        offset:
+                            const Offset(0, 3),
                       ),
                     ],
             ),
@@ -1248,16 +1671,24 @@ class _ServoPageState extends State<ServoPage>
               children: [
 
                 Container(
-                  padding: const EdgeInsets.all(7),
+                  padding:
+                      const EdgeInsets.all(7),
+
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? Colors.white.withOpacity(0.25)
-                        : _salmon.withOpacity(0.12),
+                        ? Colors.white
+                            .withOpacity(0.25)
+                        : _salmon
+                            .withOpacity(0.12),
+
                     shape: BoxShape.circle,
                   ),
+
                   child: Icon(
                     icon,
-                    color: isSelected ? Colors.white : _salmon,
+                    color: isSelected
+                        ? Colors.white
+                        : _salmon,
                     size: 22,
                   ),
                 ),
@@ -1266,10 +1697,15 @@ class _ServoPageState extends State<ServoPage>
 
                 Text(
                   label,
+
                   style: GoogleFonts.dmSans(
                     fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: isSelected ? Colors.white : _brownSoft,
+                    fontWeight:
+                        FontWeight.w800,
+
+                    color: isSelected
+                        ? Colors.white
+                        : _brownSoft,
                   ),
                 ),
 
@@ -1277,12 +1713,16 @@ class _ServoPageState extends State<ServoPage>
 
                 Text(
                   subtext,
+
                   style: GoogleFonts.dmSans(
                     fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                    fontWeight:
+                        FontWeight.w600,
+
                     color: isSelected
                         ? Colors.white70
-                        : _brownSoft.withOpacity(0.6),
+                        : _brownSoft
+                            .withOpacity(0.6),
                   ),
                 ),
               ],
@@ -1294,43 +1734,26 @@ class _ServoPageState extends State<ServoPage>
   }
 }
 
-
 // ============================================================
 // DOOR BUTTON
 // ============================================================
-// Reusable widget for the feeder door OPEN and CLOSE buttons.
-// ============================================================
 
 class _DoorButton extends StatelessWidget {
-
-  // True while ANY operation (feeding / opening / closing) is running.
   final bool isBusy;
-
-  // NEW: True when the door is already in the state this button would
-  // set (e.g. OPEN button while the door is already open).
   final bool isDisabled;
-
-  // True while THIS button's own operation is running.
   final bool isWorking;
 
-  // Normal button text.
   final String label;
-
-  // Text displayed while the operation is running.
   final String workingLabel;
 
-  // Icon displayed on the button.
   final IconData icon;
-
-  // Button color.
   final Color color;
 
-  // Function executed when the button is pressed.
   final VoidCallback onPressed;
 
   const _DoorButton({
     required this.isBusy,
-    required this.isDisabled, // NEW
+    required this.isDisabled,
     required this.isWorking,
     required this.label,
     required this.workingLabel,
@@ -1341,20 +1764,21 @@ class _DoorButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-
-    // NEW: Disabled when busy OR when the door is already in this state.
-    final disabled = isBusy || isDisabled;
+    final disabled =
+        isBusy || isDisabled;
 
     return SizedBox(
       height: 56,
 
       child: DecoratedBox(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius:
+              BorderRadius.circular(20),
 
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
+
             colors: disabled
                 ? [
                     const Color(0xFFFFD6C4),
@@ -1370,25 +1794,40 @@ class _DoorButton extends StatelessWidget {
               ? []
               : [
                   BoxShadow(
-                    color: color.withOpacity(0.4),
+                    color:
+                        color.withOpacity(0.4),
                     blurRadius: 14,
-                    offset: const Offset(0, 6),
+                    offset:
+                        const Offset(0, 6),
                   ),
                 ],
         ),
 
         child: ElevatedButton.icon(
-
-          // null disables the button.
-          onPressed: disabled ? null : onPressed,
+          onPressed:
+              disabled ? null : onPressed,
 
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            shadowColor: Colors.transparent,
-            foregroundColor: Colors.white,
+            backgroundColor:
+                Colors.transparent,
+
+            disabledBackgroundColor:
+                Colors.transparent,
+
+            shadowColor:
+                Colors.transparent,
+
+            foregroundColor:
+                Colors.white,
+
+            disabledForegroundColor:
+                Colors.white,
+
             elevation: 0,
+
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
+              borderRadius:
+                  BorderRadius.circular(20),
             ),
           ),
 
@@ -1396,18 +1835,28 @@ class _DoorButton extends StatelessWidget {
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(
+
+                  child:
+                      CircularProgressIndicator(
                     strokeWidth: 2.4,
                     color: Colors.white,
                   ),
                 )
-              : Icon(icon, size: 22, color: Colors.white),
+              : Icon(
+                  icon,
+                  size: 22,
+                  color: Colors.white,
+                ),
 
           label: Text(
-            isWorking ? workingLabel : label,
+            isWorking
+                ? workingLabel
+                : label,
+
             style: GoogleFonts.dmSans(
               fontSize: 15,
-              fontWeight: FontWeight.w800,
+              fontWeight:
+                  FontWeight.w800,
               letterSpacing: 0.8,
               color: Colors.white,
             ),
@@ -1418,12 +1867,10 @@ class _DoorButton extends StatelessWidget {
   }
 }
 
-
 // ============================================================
 // DECORATIVE WIDGETS
 // ============================================================
 
-// Circular paw icon with a SmartFeed gradient (decorative only).
 class _PawBadge extends StatelessWidget {
   const _PawBadge();
 
@@ -1435,9 +1882,11 @@ class _PawBadge extends StatelessWidget {
 
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
+
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
+
           colors: [
             _ServoPageState._salmon,
             _ServoPageState._peach,
@@ -1454,8 +1903,6 @@ class _PawBadge extends StatelessWidget {
   }
 }
 
-
-// Faded decorative paw icon used in the page background.
 class _GhostPaw extends StatelessWidget {
   final double size;
   final double angle;
@@ -1469,10 +1916,13 @@ class _GhostPaw extends StatelessWidget {
   Widget build(BuildContext context) {
     return Transform.rotate(
       angle: angle,
+
       child: Icon(
         Icons.pets,
         size: size,
-        color: Colors.white.withOpacity(0.18),
+
+        color:
+            Colors.white.withOpacity(0.18),
       ),
     );
   }

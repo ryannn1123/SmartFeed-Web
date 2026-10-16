@@ -139,7 +139,7 @@ class _HomePageState extends State<HomePage> {
     },
     {
       'icon': Icons.health_and_safety_rounded,
-      'label': 'Vet',
+      'label': 'Vets',
     },
     {
       'icon': Icons.pets_rounded,

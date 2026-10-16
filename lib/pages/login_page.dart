@@ -829,7 +829,7 @@ class _LoginPageState extends State<LoginPage>
                                   TextField(
                                     controller: _passwordController,
                                     obscureText: _obscurePassword,
-                                    //obscuringCharacter: 'R',
+                                    //obscuringCharacter: '*',
                                     textInputAction: TextInputAction.done,
                                     enabled: !_loading,
                                     onSubmitted: (_) {

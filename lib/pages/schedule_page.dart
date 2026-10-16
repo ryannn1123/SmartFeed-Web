@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../main.dart';
+import 'ble_schedule_page.dart';
 
 // =========================
 // SHARED PALETTE
@@ -368,6 +369,7 @@ class _SchedulePageState extends State<SchedulePage> {
                     ),
                   ),
 
+                    
                   // =========================
                   // STATS STRIP
                   // =========================
@@ -397,52 +399,65 @@ class _SchedulePageState extends State<SchedulePage> {
                       ),
                     ),
 
-                  // =========================
-                  // ADD BUTTON
+                                    // =========================
+                  // ADD BUTTON + BLUETOOTH BUTTON
                   // =========================
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
-                    child: SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [_Palette.salmon, _Palette.peach],
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: _Palette.salmon.withOpacity(0.4),
-                              blurRadius: 16,
-                              offset: const Offset(0, 8),
+                    child: Row(
+                      children: [
+                        // ---- Add feeding time (same as before) ----
+                        Expanded(
+                          child: SizedBox(
+                            height: 56,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(20),
+                                gradient: const LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [_Palette.salmon, _Palette.peach],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: _Palette.salmon.withOpacity(0.4),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
+                              ),
+                              child: ElevatedButton.icon(
+                                onPressed: _addSchedule,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.transparent,
+                                  shadowColor: Colors.transparent,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                ),
+                                icon: const Icon(
+                                  Icons.add_circle_outline_rounded,
+                                  size: 22,
+                                ),
+                                label: Text(
+                                  'Add feeding time',
+                                  style: GoogleFonts.dmSans(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 15,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ),
                             ),
-                          ],
+                          ),
                         ),
-                        child: ElevatedButton.icon(
-                          onPressed: _addSchedule,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                          ),
-                          icon: const Icon(Icons.add_circle_outline_rounded, size: 22),
-                          label: Text(
-                            'Add feeding time',
-                            style: GoogleFonts.dmSans(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                              letterSpacing: 0.3,
-                            ),
-                          ),
-                        ),
-                      ),
+
+                        const SizedBox(width: 12),
+
+                        
+                      ],
                     ),
                   ),
 
