@@ -6,6 +6,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 
 import 'firebase_options.dart';
 import 'pages/splash_page.dart';
@@ -22,6 +23,7 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 final supabase = Supabase.instance.client;
 
 Future<void> saveFcmToken() async {
+  if (kIsWeb) return; // Browser FCM is not configured yet.
   try {
     final user = supabase.auth.currentUser;
 
@@ -124,6 +126,7 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  if (!kIsWeb) {
   // ============================================================
   // LOCAL NOTIFICATIONS INITIALIZATION
   // ============================================================
@@ -160,6 +163,8 @@ Future<void> main() async {
     await androidPlugin.requestNotificationsPermission();
   }
 
+  }
+
   // ============================================================
   // SUPABASE PASSWORD RECOVERY
   // ============================================================
@@ -192,6 +197,9 @@ Future<void> main() async {
     },
   );
 
+  RemoteMessage? initialMessage;
+
+  if (!kIsWeb) {
   // ============================================================
   // FIREBASE NOTIFICATION PERMISSION
   // ============================================================
@@ -328,8 +336,12 @@ Future<void> main() async {
   // TERMINATED APP NOTIFICATION TAP
   // ============================================================
 
-  final RemoteMessage? initialMessage =
+  initialMessage =
       await FirebaseMessaging.instance.getInitialMessage();
+
+  } else {
+    debugPrint("SmartFeed Web: FCM disabled until web push is configured.");
+  }
 
   runApp(const SmartFeedApp());
 
@@ -340,7 +352,7 @@ Future<void> main() async {
         print('APP OPENED FROM NOTIFICATION');
 
         handleNotificationData(
-          initialMessage.data,
+          initialMessage!.data,
         );
       },
     );
